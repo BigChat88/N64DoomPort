@@ -96,13 +96,18 @@ GLYPHS = {
                                 #'t' above in the same word; top rows show
                                 # it as two separate strokes (no top crossbar
                                 # yet), matching a real 'h', not a capital H.
-    'a': ('M_NGAME',  74,  81), # "G[a]me" - genuinely lowercase, cleanly
-                                # isolated between G's tail and 'm' (see the
-                                # 'm' entry below, same word). Replaces an
-                                # earlier crop from "De[a]d" (M_EPI1
-                                # 237-247) that carried a ragged, stepped
-                                # notch out of its bottom-left corner and
-                                # read as a cut-off stroke in game.
+    'a': ('M_NGAME',  67,  81), # "G[a]me" - genuinely lowercase. Column
+                                # range confirmed by eye against a full-size
+                                # render of M_NGAME with the real PLAYPAL
+                                # palette (see tools/gen_thinfont.py's
+                                # module docstring for the render-and-crop
+                                # method) - earlier attempts at this same
+                                # letter guessed too narrow a range from raw
+                                # pixel dumps and clipped the bowl's own
+                                # left curve. Replaces an earlier crop from
+                                # "De[a]d" (M_EPI1 237-247) that carried a
+                                # ragged, stepped notch out of its
+                                # bottom-left corner.
     'm': ('M_NGAME',  81,  97), # "Ga[m]e" - genuinely lowercase, with real
                                 # diagonal strokes (unlike the earlier
                                 # straight-legs-and-bridge synthesized

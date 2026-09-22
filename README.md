@@ -7,6 +7,18 @@ a runnable `.z64`.
 No copyrighted game data is in this repository. You supply your own IWAD; the
 build packs it into the ROM.
 
+This is an update of [jnmartin84/64doom](https://github.com/jnmartin84/64doom)
+(see Acknowledgements below), not a from-scratch port: control (analog
+movement/look, configurable sensitivity, rumble) and audio both got
+reworked on top of it.
+
+## What you need to play
+
+* An **[Expansion Pak](https://en.wikipedia.org/wiki/Nintendo_64_accessories#Expansion_Pak)**
+  (4MB RAM upgrade) — on real hardware, or the equivalent option in your
+  emulator. The game needs it; it won't boot without one.
+* A **Controller Pak** (memory card) in controller port 1 if you want to save
+  your game — without one, you can still play, just not save.
 
 ## The IWAD you need
 

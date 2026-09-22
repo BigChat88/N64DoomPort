@@ -2097,8 +2097,18 @@ void M_Drawer (void)
 
 
     // DRAW SKULL
-    V_DrawPatch(x + SKULLXOFF,currentMenu->y - 5 + itemOn*lh,
+    // Not on the Read This pages: they're full-screen WAD art (HELP/HELP1/
+    // HELP2/CREDIT) with a single invisible dummy menu item just to catch
+    // the "next page" button press - the skull has nothing real to point at
+    // there and only ever looked like a stray sprite sitting on top of the
+    // artwork, in a different spot per page (see ReadDef1/ReadDef2's shared
+    // READTHIS_SKULL_X/Y above, from when this just tried to make that spot
+    // consistent instead).
+    if (currentMenu != &ReadDef1 && currentMenu != &ReadDef2)
+    {
+        V_DrawPatch(x + SKULLXOFF,currentMenu->y - 5 + itemOn*lh,
 		      W_CacheLumpName(skullName[whichSkull],PU_CACHE));
+    }
 }
 
 
