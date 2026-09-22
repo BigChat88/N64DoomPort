@@ -1,0 +1,73 @@
+// Emacs style mode select   -*- C++ -*- 
+//-----------------------------------------------------------------------------
+//
+// $Id:$
+//
+// Copyright (C) 1993-1996 by id Software, Inc.
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// DESCRIPTION:
+//	System specific interface stuff.
+//
+//-----------------------------------------------------------------------------
+
+
+#ifndef __I_VIDEO__
+#define __I_VIDEO__
+
+
+#include "doomtype.h"
+
+#ifdef __GNUG__
+#pragma interface
+#endif
+
+#include <stdint.h>
+
+// Called by D_DoomMain,
+// determines the hardware configuration
+// and sets up the video mode
+void I_InitGraphics (void);
+
+// True once I_InitGraphics has run display_init(). I_Error (i_system.c)
+// checks this before drawing its on-screen error box: libdragon's
+// display_get() asserts if the display was never initialized, and
+// I_Error can fire earlier than this (e.g. a bad WAD file, checked well
+// before I_Init() runs in D_DoomMain) - the printf a few lines above that
+// call is I_Error's only diagnostic in that case.
+extern int display_ready;
+
+
+void I_ShutdownGraphics(void);
+
+// Takes full 8 bit values.
+void I_SetPalette (byte* palette);
+
+void I_UpdateNoBlit (void);
+void I_FinishUpdate (void);
+
+// Wait for vertical retrace or pause a bit.
+void I_WaitVBL(int count);
+
+void I_ReadScreen (uint8_t* scr);
+
+void I_BeginRead (void);
+void I_EndRead (void);
+
+
+
+#endif
+//-----------------------------------------------------------------------------
+//
+// $Log:$
+//
+//-----------------------------------------------------------------------------

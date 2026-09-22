@@ -1,0 +1,96 @@
+name: release
+
+# A push to the main branch -- a direct commit or a merged pull request, both
+# land as a push -- builds the WAD-independent engine + the host packing
+# tools and publishes a GitHub Release whose asset is a self-contained
+# "everything you need to build a ROM" archive: drop in your own IWAD,
+# render its music (needs fluidsynth+ffmpeg), then run tools/pack_rom.py --
+# no Docker, no N64 toolchain required.
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/dragonminded/libdragon:latest   # mips64-elf toolchain + $N64_INST
+
+    steps:
+      - name: Install packaging deps
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends zip rsync git ca-certificates gcc-mingw-w64-x86-64
+
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Trust the workspace
+        run: git config --global --add safe.directory '*'
+
+      - name: Version
+        id: ver
+        run: |
+          VER="$(tr -d ' \r\n' < VERSION)"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VER"    >> "$GITHUB_OUTPUT"
+
+      - name: Build libdragon (pinned submodule) + engine
+        run: |
+          make -C libdragon -j"$(nproc)" install
+          # The library `install` target does NOT build the host tools. The
+          # `engine` target below runs n64sym + n64elfcompress, so build and
+          # install those from the pinned submodule into $N64_INST/bin.
+          make -C libdragon/tools -j"$(nproc)" n64sym-install n64elfcompress-install
+          make engine
+          ls -l src/ENGINE.elf.stripped src/ENGINE.sym src/ENGINE.msym
+
+      - name: Cross-compile the Windows host tools
+        run: |
+          CC=x86_64-w64-mingw32-gcc bash tools/vendor/bin/build-tools.sh
+          ls -l tools/vendor/bin/*.exe
+
+      - name: Stage the bundle
+        id: stage
+        run: |
+          set -eu
+          NAME="N64DoomPort-${{ steps.ver.outputs.version }}"
+          DEST="stage/$NAME"
+          mkdir -p "$DEST"
+          # exactly the tracked source (git-ignored copyrighted data is excluded
+          # by definition), including the libdragon submodule
+          git ls-files --recurse-submodules -z | rsync -a --files-from=- --from0 ./ "$DEST/"
+          # the CI-built binaries the packer needs
+          mkdir -p "$DEST/tools/vendor/engine"
+          cp src/ENGINE.elf.stripped "$DEST/tools/vendor/engine/doom.elf.stripped"
+          cp src/ENGINE.sym          "$DEST/tools/vendor/engine/doom.sym"
+          cp src/ENGINE.msym         "$DEST/tools/vendor/engine/doom.msym"
+          cp tools/vendor/bin/*.exe "$DEST/tools/vendor/bin/"
+          # provenance
+          {
+            echo "N64DoomPort ${{ steps.ver.outputs.version }}"
+            echo "commit:  ${GITHUB_SHA}"
+            echo "ref:     ${GITHUB_REF}"
+            echo "run:     ${GITHUB_RUN_NUMBER}"
+            echo "built:   $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$DEST/BUILD_INFO.txt"
+          ( cd stage && zip -qr "../$NAME.zip" "$NAME" )
+          ls -l "$NAME.zip"
+          echo "asset=$NAME.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: N64DoomPort ${{ steps.ver.outputs.version }}
+          prerelease: true
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          files: ${{ steps.stage.outputs.asset }}
