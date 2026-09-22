@@ -24,7 +24,7 @@ jobs:
       - name: Install packaging deps
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends zip rsync git ca-certificates gcc-mingw-w64-x86-64
+          apt-get install -y --no-install-recommends zip rsync git ca-certificates gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
 
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
@@ -46,15 +46,16 @@ jobs:
         run: |
           make -C libdragon -j"$(nproc)" install
           # The library `install` target does NOT build the host tools. The
-          # `engine` target below runs n64sym + n64elfcompress, so build and
-          # install those from the pinned submodule into $N64_INST/bin.
-          make -C libdragon/tools -j"$(nproc)" n64sym-install n64elfcompress-install
+          # `engine` target below runs n64sym + n64elfcompress + n64dso-msym,
+          # so build and install those from the pinned submodule into
+          # $N64_INST/bin.
+          make -C libdragon/tools -j"$(nproc)" n64sym-install n64elfcompress-install n64dso-msym-install
           make engine
           ls -l src/ENGINE.elf.stripped src/ENGINE.sym src/ENGINE.msym
 
       - name: Cross-compile the Windows host tools
         run: |
-          CC=x86_64-w64-mingw32-gcc bash tools/vendor/bin/build-tools.sh
+          CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ bash tools/vendor/bin/build-tools.sh
           ls -l tools/vendor/bin/*.exe
 
       - name: Stage the bundle

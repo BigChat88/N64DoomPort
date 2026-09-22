@@ -17,15 +17,16 @@ already on your system.
 * **Download a [Release](../../../../releases)** - each one ships Windows
   `.exe`s built the way described below, plus the matching prebuilt engine
   (see `../engine/README.md`). This is the no-Docker, no-toolchain path.
-* **Build them yourself.** They are small single-file C programs; the
-  libdragon Docker toolchain is not required, just the `libdragon` submodule
-  checked out and any native C compiler:
+* **Build them yourself.** The libdragon Docker toolchain is not required,
+  just the `libdragon` submodule checked out and a native C **and C++**
+  compiler (`libdragon/tools/Makefile`, which `build-tools.sh` delegates to,
+  always links through `$CXX` even for the C-only tools here):
 
   ```sh
-  ./build-tools.sh                 # gcc on PATH
-  CC=/c/Users/you/scoop/apps/gcc/current/bin/gcc ./build-tools.sh
+  ./build-tools.sh                                        # gcc/g++ on PATH
+  CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ ./build-tools.sh   # cross to Windows
   ```
 
-  The release `.exe`s are made this way with mingw-w64 gcc on Windows x64 in
+  The release `.exe`s are made this way with mingw-w64 gcc/g++ on Linux in
   CI. They are not portable across OS/arch - rebuild for yours, or delete
   them and rely on `$N64_INST/bin` (i.e. a full `libdragon`/Docker install).
