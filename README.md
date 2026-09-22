@@ -7,14 +7,6 @@ a runnable `.z64`.
 No copyrighted game data is in this repository. You supply your own IWAD; the
 build packs it into the ROM.
 
-The engine source is based on the `rdpq` branch of
-[jnmartin84/64doom](https://github.com/jnmartin84/64doom), which itself is a
-libdragon port of id Software's released DOOM source. See
-[doc/CREDITS.TXT](doc/CREDITS.TXT) for full attribution and
-[doc/GPLV3.TXT](doc/GPLV3.TXT) / [doc/DOOMLIC.TXT](doc/DOOMLIC.TXT) for
-licensing. This is the starting point for our own N64 Doom port — expect the
-engine, renderer and platform layer to diverge from upstream 64doom as we make
-improvements.
 
 ## The IWAD you need
 
@@ -39,16 +31,9 @@ The build accepts, dropped into `input/`:
   FluidSynth/ffmpeg" below if you don't already have them.
 * **Your own IWAD** — see the section above.
 
-You do **not** need Docker, the `libdragon` CLI, or any N64 toolchain
-installed — every [Release](../../releases) already includes a prebuilt
-engine and the small helper programs that pack a ROM, built by this repo's
-own CI (see "Building from source" below if you'd rather build those
-yourself).
+## How to build the ROM
 
-## How to get your ROM
-
-1. Grab the latest [Release](../../releases) and unzip it (or use a checkout
-   of this repo — it's the same content either way).
+1. Grab the latest [Release](../../releases) and unzip it
 2. Put your IWAD (e.g. `DOOM2.WAD`) in `input/`.
 3. Build it:
    * **Windows:** double-click `build.cmd` (or run it from a terminal).
@@ -135,8 +120,7 @@ Thanks to **[jnmartin84](https://github.com/jnmartin84)** for
 released DOOM source that this project is built on top of — the engine,
 renderer and N64 platform layer here all started as that code. Thanks also
 to the **[libdragon](https://github.com/DragonMinded/libdragon)** team for
-the open-source N64 SDK. See [doc/CREDITS.TXT](doc/CREDITS.TXT) for full
-attribution, including id Software's original DOOM source release.
+the open-source N64 SDK. 
 
 ## AI Note
 
