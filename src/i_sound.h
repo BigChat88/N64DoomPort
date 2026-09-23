@@ -123,6 +123,14 @@ void I_StopSong(int handle);
 // See above (register), then think backwards
 void I_UnRegisterSong(int handle);
 
+// Diagnostic build switch for SFX problems: set to 1 and L+Start cycles
+// audio test modes while the HUD shows audio stats once a second (see
+// i_sound.c). Used to trace the SFX crackle down to sample alignment (see
+// getsfx()); keep at 0 for normal builds - L+Start replaces the menu key.
+#define AUDIO_DEBUG 0
+#if AUDIO_DEBUG
+void I_AudioDebugCycle(void);
+#endif
 
 
 #endif

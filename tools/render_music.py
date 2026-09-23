@@ -241,8 +241,17 @@ def render_track(fluidsynth, ffmpeg, soundfont, midi_path, out_wav, gain):
         # comes up, the climax gets gently reined in - so the whole track
         # sits close to one consistent loudness for the mixer to balance
         # against, instead of swinging several-fold within the same song.
+        #
+        # The limiter ceiling is well under full scale: the N64 mixer
+        # resamples this channel with Hermite interpolation that overshoots
+        # up to 25% between samples and saturates to int16 *before* the
+        # channel volume is applied (see getsfx() in src/i_sound.c), so
+        # anything above 1/1.25 = 0.8 could hard-clip on playback however
+        # low the music volume is set. The ceiling sits a bit under that,
+        # at 0.75, because alimiter itself lets peaks land ~3% over its
+        # limit (measured 0.825 with limit=0.8).
         af = (f"dynaudnorm=f=500:g=15:p=0.9:m=6,"
-              f"afade=t=out:st={fade_start}:d={FADE_SEC},alimiter=limit=0.97:level=disabled")
+              f"afade=t=out:st={fade_start}:d={FADE_SEC},alimiter=limit=0.75:level=disabled")
         subprocess.run(
             [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
              "-i", raw_wav, "-t", str(MAX_LEN_SEC), "-ac", "1", "-ar", str(OUTPUT_RATE),

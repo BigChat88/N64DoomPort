@@ -1202,6 +1202,59 @@ void G_LoadGame (char* name)
 // Doom console message printed for load/save game status
 char msg[256];
 
+//
+// is_our_save_entry
+// True if a Controller Pak entry is this game's save. Entries are named after
+// get_GAMEID() without its ".WAD" suffix and read back with an (empty)
+// extension appended, e.g. "DOOM2." - so the name must match the base AND be
+// followed by that '.', not just share a prefix: a plain prefix compare made
+// DOOM.WAD treat DOOM2's or DOOMU's save as its own (loading the wrong game's
+// save, or deleting it when saving).
+//
+static int is_our_save_entry(const entry_structure_t *entry, const char *gameid);
+
+//
+// pak_free_blocks
+// Free pages on the Controller Pak in port 1, or -1 if it can't be read.
+// Replaces libdragon's get_mempak_free_space(), which is broken in the
+// libdragon version this port uses: it temporarily mounts the pak under the
+// prefix "mempak_shim", but attach_filesystem() rejects any prefix not
+// ending in ":/", so that mount always fails and the call always returns -2
+// ("pak bad or not present") on a perfectly good pak. Loading never calls it,
+// which is why loads worked while saves failed. Before this was checked for
+// errors, that -2 was silently added to the old save's size, so overwriting
+// only succeeded when the new save came out at least 2 blocks smaller than
+// the old one - the long-standing "not enough space" on every overwrite.
+//
+int pak_free_blocks(void)
+{
+    cpakfs_stats_t stats;
+    int err;
+
+    if (cpakfs_mount(JOYPAD_PORT_1, "doompak:/") < 0)
+    {
+        return -1;
+    }
+    err = cpakfs_get_stats(JOYPAD_PORT_1, &stats);
+    cpakfs_unmount(JOYPAD_PORT_1);
+    if (err < 0)
+    {
+        return -1;
+    }
+
+    return stats.pages.total - stats.pages.used;
+}
+
+static int is_our_save_entry(const entry_structure_t *entry, const char *gameid)
+{
+    const char *dot = strchr(gameid, '.');
+    size_t len = dot ? (size_t)(dot - gameid) : strlen(gameid);
+
+    return entry->valid
+        && !strncmp(entry->name, gameid, len)
+        && entry->name[len] == '.';
+}
+
 void G_DoLoadGame (void)
 {
     char *gameid = get_GAMEID();
@@ -1251,13 +1304,7 @@ void G_DoLoadGame (void)
         {
             any_entries = 1;
 
-            char *dot;
-            uintptr_t index;
-            dot = strchr(gameid, '.');
-            index = (uintptr_t)dot - (uintptr_t)gameid;
-            
-            // using value of get_GAMEID() without the ".WAD" suffix as identifier for entry
-            if (!strncmp(entry.name,gameid,index))
+            if (is_our_save_entry(&entry, gameid))
             {
                 entry_found = 1;
                 break;
@@ -1294,14 +1341,10 @@ void G_DoLoadGame (void)
         goto the_end_of_loading;
     }
 
+    // header block (compressed size) + at least one block of compressed data
     if (entry.blocks < 2)
     {
         I_Error("less than 2 blocks");
-    }
-    // I don't remember why this isn't redundant with the above, maybe it is
-    if (entry.blocks < 3)
-    {
-        I_Error("less than 3 blocks");
     }
 
     unsigned int uncompressed_save_size = 0;
@@ -1391,20 +1434,6 @@ the_end_of_loading:
 // Called by the menu task.
 // Description is a 24 byte text string
 //
-// Controller Pak entry_id our save occupies, once we know it. Every save
-// after the first one this session goes straight to this exact entry
-// instead of re-deriving it from a fresh name search - the name search
-// (still used as a fallback: this starts at -1 every boot, so the first
-// save of a session, or one after this cache somehow misses, still has to
-// find a save from a previous session the normal way) round-trips the name
-// through the Controller Pak's own encoding, and re-running it on every
-// single save was the mechanism observed to occasionally miss the entry
-// entirely - see G_DoSaveGame - which read as "always overwrite the same
-// slot" failing: it would fall through to *creating a brand new entry*
-// instead, and since the old one was never freed, that new entry usually
-// didn't fit in whatever the Controller Pak had left.
-static int cached_save_entry_id = -1;
-
 void G_SaveGame ( int slot, char* description )
 {
     savegameslot = slot;
@@ -1467,14 +1496,7 @@ void G_DoSaveGame (void)
         I_Error("G_DoSaveGame: Savegame buffer overrun");
     }
 
-    int available_free_blocks = 0;
     joypad_get_accessory_type(JOYPAD_PORT_1);
-    available_free_blocks = get_mempak_free_space(0);
-    if (0 == available_free_blocks)
-    {
-        sprintf(msg, "Mempak is full. Not saving.");
-        goto the_end_of_saving;
-    }
 
     unsigned int uncompressed_save_size = length;
     unsigned int compressed_save_size = 256*122;
@@ -1502,34 +1524,19 @@ void G_DoSaveGame (void)
 
     *(uint32_t *)(&mempak_data[0]) = compressed_save_size;
 
-    int old_entry_size = -1;
-
     char *gameid = get_GAMEID();
-    int save_size_in_blocks = SAVE_SIZE_IN_BLOCKS(compressed_save_size) + 1;
-    int gobackid = -1;
-    int gobacksize = -1;
+    // one header block (holding compressed_save_size) + the compressed data
+    int save_size_in_blocks = SAVE_SIZE_IN_BLOCKS(compressed_save_size);
 
-    // Fast path: we already know which entry is ours from a previous save
-    // this session. Confirm it's still there (defensively - it always
-    // should be) instead of trusting the id blindly, but skip the full
-    // by-name scan below entirely.
-    if (cached_save_entry_id != -1)
-    {
-        entry_structure_t entry;
-        int rv = get_mempak_entry( 0, cached_save_entry_id, &entry );
-        if (0 == rv && entry.valid)
-        {
-            char *dot = strchr(gameid, '.');
-            uintptr_t index = (uintptr_t)dot - (uintptr_t)gameid;
-            if (!strncmp(entry.name,gameid,index))
-            {
-                gobackid = cached_save_entry_id;
-                gobacksize = entry.blocks;
-            }
-        }
-    }
+    // Find every entry that belongs to this game, not just the first one.
+    // Earlier builds could leave more than one behind (a save that missed
+    // the old entry wrote a brand new one next to it), and each leftover
+    // permanently ate space an overwrite needs - so all of them are counted
+    // as reclaimable here and all of them get replaced by this save.
+    int old_ids[16];
+    int num_old = 0;
+    int old_blocks = 0;
 
-    if (gobackid == -1)
     for (int j = 0; j < 16; j++)
     {
         entry_structure_t entry;
@@ -1552,41 +1559,34 @@ void G_DoSaveGame (void)
             goto the_end_of_saving;
         }
 
-        if (entry.valid)
+        if (is_our_save_entry(&entry, gameid))
         {
-            char *dot;
-            uintptr_t index;
-            dot = strchr(gameid, '.');
-            index = (uintptr_t)dot - (uintptr_t)gameid;
-
-            // using value of get_GAMEID() without the ".WAD" suffix as identifier for entry
-            if (!strncmp(entry.name,gameid,index))
-            {
-                gobackid = j;
-                gobacksize = entry.blocks;
-                break;
-            }
-
-            rv = 0;
-            continue;
+            old_ids[num_old++] = j;
+            old_blocks += entry.blocks;
         }
     }
 
-    if(gobackid != -1)
+    int available_free_blocks = pak_free_blocks();
+    if (available_free_blocks < 0)
     {
-        old_entry_size = gobacksize;
+        sprintf(msg, "pak bad or not present");
+        goto the_end_of_saving;
+    }
 
-        available_free_blocks = get_mempak_free_space(0);
+    // Checked against free space PLUS what the old save(s) will give back,
+    // before deleting anything, so a save that can't fit leaves the old one
+    // intact instead of losing both.
+    if (save_size_in_blocks > (available_free_blocks + old_blocks))
+    {
+        sprintf(msg,"Not enough space for save (need %d, have %d)", save_size_in_blocks, (available_free_blocks + old_blocks));
+        goto the_end_of_saving;
+    }
 
-        if (save_size_in_blocks > (available_free_blocks + old_entry_size))
-        {
-            sprintf(msg,"Not enough space for save (need %d, have %d)", save_size_in_blocks, (available_free_blocks + old_entry_size));
-            goto the_end_of_saving;
-        }
-
+    for (int k = 0; k < num_old; k++)
+    {
         entry_structure_t entry;
 
-        int rv = get_mempak_entry( 0, gobackid, &entry );
+        int rv = get_mempak_entry( 0, old_ids[k], &entry );
         rv |= delete_mempak_entry(0, &entry);
         if (0 != rv)
         {
@@ -1614,13 +1614,6 @@ void G_DoSaveGame (void)
     rv = 0;
     rv |= write_mempak_entry_data(0, &doom_save_entry, mempak_data);
 
-    if (0 == rv)
-    {
-        // Remember exactly which entry this save landed in, so the next
-        // save goes straight back to it (see cached_save_entry_id above).
-        cached_save_entry_id = doom_save_entry.entry_id;
-    }
-
 /*
  * @retval 0 if the entry was created and written successfully
  * @retval -1 if the parameters were invalid or the note has no length
@@ -1643,7 +1636,7 @@ void G_DoSaveGame (void)
     }
     else if (-4 == rv)
     {
-        sprintf(msg,"not enough space (need %d, have %d)", save_size_in_blocks, get_mempak_free_space(0));
+        sprintf(msg,"not enough space (need %d, have %d)", save_size_in_blocks, pak_free_blocks());
     }
     else if (-5 == rv)
     {

@@ -26,6 +26,7 @@
 #include <stdlib.h>
 
 #include "i_input.h"
+#include "i_sound.h"
 
 #include "doomstat.h"
 #include "i_system.h"
@@ -307,7 +308,7 @@ static int stick_turn_amount(int deflection, int turn_max)
 // even a light tap of the stick moved the player at (or above) running
 // speed. Forward/back is now posted as a digital ev_joystick event instead,
 // routing it through the same code path as the D-Pad (joyymove), which
-// always moves at the normal walk speed.
+// moves at walk speed unless the run key (C-Up) is held.
 //
 // Turning is kept analog (posted as an ev_mouse event, consumed only for
 // angleturn - see G_BuildTiccmd's "cmd->angleturn -= mousex*0x8") rather
@@ -512,8 +513,8 @@ void pressed_key(joypad_buttons_t *p_data) //, int player)
             D_PostEvent(&doom_input_event);
         }
 
-        // AUTOMAP
-        if (pressed.c_up)
+        // AUTOMAP (C-Up is RUN, shared below)
+        if (pressed.c_down)
         {
             doom_input_event.data1 = KEY_TAB;
             doom_input_event.type = ev_keydown;
@@ -541,7 +542,15 @@ void pressed_key(joypad_buttons_t *p_data) //, int player)
         }
     }
 
-    // shared between both control types: D-Pad movement/menu navigation and Start
+    // shared between both control types: C-Up run (held), D-Pad
+    // movement/menu navigation and Start
+    // RUN - KEY_RSHIFT is key_speed's default binding (see m_misc.c)
+    if (pressed.c_up)
+    {
+        doom_input_event.data1 = KEY_RSHIFT;
+        doom_input_event.type = ev_keydown;
+        D_PostEvent(&doom_input_event);
+    }
     if (pressed.d_up)
     {
         doom_input_event.data1 = KEY_UPARROW;
@@ -566,6 +575,15 @@ void pressed_key(joypad_buttons_t *p_data) //, int player)
         doom_input_event.type = ev_keydown;
         D_PostEvent(&doom_input_event);
     }
+#if AUDIO_DEBUG
+    // Diagnostic build: L+Start cycles the audio test modes (see i_sound.c)
+    // instead of opening the menu.
+    if (pressed.start && joypad_get_buttons_held(JOYPAD_PORT_1).l)
+    {
+        I_AudioDebugCycle();
+    }
+    else
+#endif
     if (pressed.start)
     {
         doom_input_event.data1 = KEY_ESCAPE;
@@ -689,7 +707,7 @@ void released_key(joypad_buttons_t *r_data) //, int player)
             doom_input_event.type = ev_keyup;
             D_PostEvent(&doom_input_event);
         }
-        if (released.c_up)
+        if (released.c_down)
         {
             doom_input_event.data1 = KEY_TAB;
             doom_input_event.type = ev_keyup;
@@ -709,7 +727,14 @@ void released_key(joypad_buttons_t *r_data) //, int player)
         }
     }
 
-    // shared between both control types: D-Pad movement/menu navigation and Start
+    // shared between both control types: C-Up run, D-Pad movement/menu
+    // navigation and Start
+    if (released.c_up)
+    {
+        doom_input_event.data1 = KEY_RSHIFT;
+        doom_input_event.type = ev_keyup;
+        D_PostEvent(&doom_input_event);
+    }
     if (released.d_up)
     {
         doom_input_event.data1 = KEY_UPARROW;
