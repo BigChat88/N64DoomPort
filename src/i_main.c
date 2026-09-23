@@ -35,6 +35,8 @@
 #include "i_intro.h"
 
 extern void DoomIsOver();
+// see g_game.c - libdragon's get_mempak_free_space() always fails here
+extern int pak_free_blocks(void);
 
 void check_and_init_mempak(void)
 {
@@ -99,7 +101,7 @@ void check_and_init_mempak(void)
                     }
                 }
 #endif
-                printf("\nFree space: %d blocks\n", get_mempak_free_space(0));
+                printf("\nFree space: %d blocks\n", pak_free_blocks());
             }
 
             break;

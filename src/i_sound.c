@@ -88,17 +88,180 @@
 // number of channels available for sound effects
 extern int numChannels;
 
-// SFX voices: one mixer channel each, matching a Doom sound channel 1:1.
+// SFX voices: one per Doom sound channel, each backed by a *pair* of mixer
+// channels (2*voice and 2*voice+1). Doom constantly restarts a channel with
+// a new sound while the old one is still mid-waveform (every shot of a
+// repeating weapon, a monster's sounds replacing each other). Starting the
+// new sound on the same mixer channel cuts the old one off wherever it
+// happens to be - up to ~80% of full scale - and that step is a loud click
+// on every such restart, which is what kept sounding like clipping. With a
+// pair, the old sound fades out on one channel while the new one starts on
+// the other (see I_StartSound).
 #define SFX_VOICES      8
+#define SFX_MIXER_CHANNELS (SFX_VOICES * 2)
 // Music: a single channel playing one pre-rendered, already-looping wav64
 // stream - see the big comment above.
-#define MUSIC_CH        SFX_VOICES
-#define NUM_MIXER_CHANNELS (SFX_VOICES + 1)
+#define MUSIC_CH        SFX_MIXER_CHANNELS
+#define NUM_MIXER_CHANNELS (SFX_MIXER_CHANNELS + 1)
+
+// Length (in output samples, ~2.9ms at 44100 Hz) of every SFX fade: in at
+// start, out on stop/replace, and gain changes. Same length libdragon uses
+// to declick its own mixer_ch_set_vol changes (MIXER_DECLICK_SAMPLES).
+#define SFX_DECLICK 128
+
+// Fade-out applied to the last samples of every SFX's own data (at 11025 Hz,
+// ~5.8ms), plus zeroed padding after it: many of the WAD's sounds end on a
+// non-zero sample (DSPOPAIN on 48, DSSAWUP on -34), which clicks when the
+// sound ends, and the resampler reads a few samples past the end, which
+// would otherwise be whatever zone memory follows.
+#define SFX_TAIL_FADE 64
+#define SFX_TAIL_PAD  16
+
+// Which of its two mixer channels each voice is currently using, and whether
+// Doom still considers it playing (cleared by I_StopSound, while the fade-out
+// is still running on the mixer channel).
+static int voice_sub[SFX_VOICES];
+static int voice_live[SFX_VOICES];
+
+static int I_VoiceCh(int voice)
+{
+    return voice * 2 + voice_sub[voice];
+}
+
+static int I_VoiceActive(int voice)
+{
+    return voice_live[voice] && mixer_ch_playing(I_VoiceCh(voice));
+}
+
+#if AUDIO_DEBUG
+static waveform_t sfx_wave[NUMSFX];  // defined below, in the SFX section
+#include "doomstat.h"
+extern boolean message_dontfuckwithme;
+
+// Test modes, cycled in-game with L+Start (see i_input.c). Earlier runs
+// already showed: no noise at all with SFX muted, crackle with one 8-bit
+// voice, clean with one 16-bit voice. Mode 3 of that build also moved the
+// data to a 16-byte-aligned buffer, so this round separates the two:
+//  0 NORMAL             - unchanged
+//  1 1 VOICE 8BIT       - one SFX at a time, WAD data as-is (unaligned)
+//  2 1 VOICE 8BIT ALIGN - same 8-bit data, copied to a 16-byte-aligned
+//                         buffer: clean -> alignment is the cause
+//  3 1 VOICE 16BIT      - widened to 16-bit in an aligned buffer (known clean)
+enum { DBG_NORMAL, DBG_ONE, DBG_ONE8A, DBG_ONE16, DBG_NUM_MODES };
+static const char *dbg_names[DBG_NUM_MODES] =
+{
+    "NORMAL", "1 VOICE 8BIT", "1 VOICE 8BIT ALIGN", "1 VOICE 16BIT",
+};
+static int dbg_mode = DBG_NORMAL;
+static char dbg_msg[80];
+static uint32_t dbg_last_ms, dbg_report_ms, dbg_max_gap, dbg_starved;
+
+// Modes 2/3's two aligned copies (ping-ponged like a voice's mixer channels,
+// so a sound fading out never has its data overwritten under it).
+static int16_t *dbg16[2];
+static waveform_t dbg_wave16[2];
+static int dbg16_sel;
+
+static void I_AudioDebugReport(const char *what)
+{
+    snprintf(dbg_msg, sizeof(dbg_msg), "%s: %s GAP%lu STARVE%lu",
+             what, dbg_names[dbg_mode], dbg_max_gap, dbg_starved);
+    players[consoleplayer].message = dbg_msg;
+    message_dontfuckwithme = true;
+}
+
+void I_AudioDebugCycle(void)
+{
+    int ch;
+
+    dbg_mode = (dbg_mode + 1) % DBG_NUM_MODES;
+    for (ch = 0; ch < SFX_MIXER_CHANNELS; ch++)
+    {
+        mixer_ch_stop(ch);
+    }
+    memset(voice_live, 0, sizeof(voice_live));
+    dbg_max_gap = 0;
+    dbg_starved = 0;
+    I_AudioDebugReport("MODE");
+}
+
+// Called at the top of I_UpdateSound: the longest time between two mixer
+// pumps (ms) and how often the audio queue was found empty - i.e. whether
+// the AI was about to run, or had already run, out of audio (a gap in the
+// output, heard as a crackle whenever something is audible).
+static void I_AudioDebugTick(void)
+{
+    uint32_t now = get_ticks_ms();
+
+    if (dbg_last_ms)
+    {
+        uint32_t gap = now - dbg_last_ms;
+        if (gap > dbg_max_gap)
+        {
+            dbg_max_gap = gap;
+        }
+    }
+    dbg_last_ms = now;
+
+    if (audio_get_queued_buffers() == 0)
+    {
+        dbg_starved++;
+    }
+
+    if (now - dbg_report_ms >= 1000)
+    {
+        dbg_report_ms = now;
+        if (gamestate == GS_LEVEL)
+        {
+            I_AudioDebugReport("AUD");
+        }
+        dbg_max_gap = 0;
+    }
+}
+
+// Modes 2/3: copy an SFX into a 16-byte-aligned buffer, keeping it 8-bit
+// or widening it to 16-bit, and return a waveform for the copy.
+static waveform_t *I_AudioDebugCopy(int id, int bits)
+{
+    const waveform_t *src = &sfx_wave[id];
+    int i;
+
+    dbg16_sel ^= 1;
+    if (!dbg16[dbg16_sel])
+    {
+        // Longest SFX in any supported IWAD is DOOM2's DSBOSSIT, 57064 samples.
+        dbg16[dbg16_sel] = malloc_uncached(65536 * sizeof(int16_t));
+    }
+    int len = src->len < 65536 ? src->len : 65536;
+    if (bits == 16)
+    {
+        for (i = 0; i < len; i++)
+        {
+            dbg16[dbg16_sel][i] = (int16_t)(((const int8_t *)src->mem)[i]) << 8;
+        }
+    }
+    else
+    {
+        memcpy(dbg16[dbg16_sel], src->mem, len);
+    }
+
+    dbg_wave16[dbg16_sel] = *src;
+    dbg_wave16[dbg16_sel].bits = bits;
+    dbg_wave16[dbg16_sel].len = len;
+    dbg_wave16[dbg16_sel].mem = dbg16[dbg16_sel];
+    dbg_wave16[dbg16_sel].__uuid = 0;
+    return &dbg_wave16[dbg16_sel];
+}
+#endif
 
 // Native sample rate of the WAD's DMX PCM sound effects. The mixer output
 // rate (see audio_init below) is independent of this - each channel is
 // resampled to it automatically.
 #define SFX_SAMPLERATE 11025
+
+// Peak (out of the 8-bit sample range) every SFX is normalized to - see
+// getsfx() for why it can't be any higher.
+#define SFX_PEAK 100
 
 static int changepitch;
 
@@ -209,13 +372,30 @@ void *getsfx (char *sfxname, int *len)
     size = W_LumpLength(sfxlump);
     sfx = (uint8_t*)W_CacheLumpNum(sfxlump, PU_STATIC);
 
-    // Allocate from zone memory.
-    cnvsfx = (uint8_t*)Z_Malloc(size, PU_SOUND, 0);
+    // Allocate from zone memory, with SFX_TAIL_PAD bytes of silence after
+    // the sound for the resampler to read past its end.
+    //
+    // The sample data (right after the 8-byte DMX header) must start on a
+    // 16-byte boundary and must not share a 16-byte D-cache line with
+    // anything else. Zone blocks land at arbitrary 4-byte-aligned addresses,
+    // and 8-bit samples read from there came out crackling ("clipping") on
+    // every sound, at any volume. It was narrowed down in-game with the
+    // AUDIO_DEBUG test modes: one voice playing the WAD data where it sat
+    // crackled; the *same* 8-bit bytes copied to a 16-byte-aligned buffer
+    // were clean, just like a 16-bit copy. The block is over-allocated by 32
+    // so the data can be moved up to the next boundary and its tail padded
+    // out to the next one, both inside this block.
+    int blocksize = size + SFX_TAIL_PAD + 32;
+    uint8_t *block = (uint8_t*)Z_Malloc(blocksize, PU_SOUND, 0);
+    cnvsfx = (uint8_t*)((((uintptr_t)block + 8 + 15) & ~(uintptr_t)15) - 8);
     // Now copy and convert offset to signed.
     for (i = 0; i < size; i++)
     {
         cnvsfx[i] = sfx[i] ^ 0x80;
     }
+    // Silence from the end of the sound to the end of the block: covers
+    // SFX_TAIL_PAD and the rest of the sound's last cache line.
+    memset(cnvsfx + size, 0, (block + blocksize) - (cnvsfx + size));
 
     // Remove the cached lump.
     Z_Free(sfx);
@@ -243,24 +423,47 @@ void *getsfx (char *sfxname, int *len)
             if (a < 0) a = -a;
             if (a > peak) peak = a;
         }
-        // Leave real headroom under 127, not just enough to avoid clipping
-        // this one sample's own peak: this is the *source* peak, before
-        // I_SfxRebalance's own poly-voice scaling (which starts at no
-        // reduction for a single voice) and the mixer's global volume -
-        // still occasionally audibly clipping even for one voice alone
-        // (see the iteration-5 bug report), meaning 120 (94% of full
-        // scale) didn't leave enough margin for those on top of this.
-        // Silence (peak == 0) and already-normalized sounds both still
-        // skip this - nothing to gain and dividing by zero besides.
-        if (peak > 0 && peak < 108)
+        // The target peak has to leave room for the mixer's resampler, not
+        // for any volume: libdragon's RSP mixer upsamples every channel
+        // (11025 Hz here -> 44100 Hz output) with 4-tap Catmull-Rom/Hermite
+        // interpolation, which overshoots between samples by up to 25% on
+        // sharp waveforms (e.g. taps -1,1,1,-1 interpolate to 1.25 at the
+        // midpoint) - and it saturates that interpolated value to int16
+        // *before* multiplying by the channel volume (see rsp_mixer.S's
+        // MonoLoop: the vmadm chain into v_res, then vmacf by v_xvol). So a
+        // sound peaking near full scale hard-clips inside the resampler no
+        // matter how low the channel gain, poly scaling or master volume
+        // are set - which is why lowering all of those (earlier iterations)
+        // never removed the crackle, even for one sound with music off.
+        // 8-bit samples are widened as s<<8, so |s| * 256 * 1.25 must stay
+        // under 32767: |s| <= 102. SFX_PEAK sits just under that.
+        //
+        // Applied to every sound, both ways: quiet ones are boosted up to it
+        // (DSITEMUP peaks at only 19/127 in the WAD) and already-loud ones
+        // (DSPISTOL and others reach 127/128) are brought *down* to it -
+        // skipping those, as before, left exactly the loudest sounds
+        // clipping. Silence (peak == 0) is left alone.
+        if (peak > 0 && peak != SFX_PEAK)
         {
             for (i = 8; i < size; i++)
             {
-                int32_t s = ((int32_t)(int8_t)cnvsfx[i] * 108) / peak;
+                int32_t s = ((int32_t)(int8_t)cnvsfx[i] * SFX_PEAK) / peak;
                 if (s > 127) s = 127;
                 else if (s < -128) s = -128;
                 cnvsfx[i] = (uint8_t)(int8_t)s;
             }
+        }
+
+        // Fade the last SFX_TAIL_FADE samples to zero (see its comment).
+        int fade = size - 8;
+        if (fade > SFX_TAIL_FADE)
+        {
+            fade = SFX_TAIL_FADE;
+        }
+        for (i = 0; i < fade; i++)
+        {
+            int idx = size - fade + i;
+            cnvsfx[idx] = (uint8_t)(int8_t)(((int)(int8_t)cnvsfx[idx] * (fade - 1 - i)) / fade);
         }
     }
 
@@ -268,7 +471,7 @@ void *getsfx (char *sfxname, int *len)
     // bypassing the CPU cache entirely - without this writeback, the bytes
     // just written above could still be sitting in D-cache and never make
     // it to RAM before the RSP reads them.
-    data_cache_hit_writeback(cnvsfx, size);
+    data_cache_hit_writeback(block, blocksize);
 
     // return length.
     *len = size;
@@ -290,43 +493,55 @@ void *getsfx (char *sfxname, int *len)
 // separate multiplier layered on top of it (see mixer.h), so this doesn't
 // fight that per-sound level the way overriding it directly would.
 //
-// The whole table carries a flat 0.85 on top of the 1/sqrt(n) shape:
-// even a single voice (n=1) was still occasionally audibly clipping (see
-// the iteration-5 bug report) - between this and each sound's own
-// getsfx() normalization now using more of the WAD sample's real 8-bit
-// range than before, there was less spare headroom left for a single
-// voice than the table assumed.
+// This used to carry a flat 0.85 on top of the 1/sqrt(n) shape to fight
+// clipping on a single voice - that clipping actually happened inside the
+// mixer's resampler, before any gain is applied (see getsfx()), so no gain
+// here could ever fix it. getsfx()'s SFX_PEAK is what does; the plain
+// 1/sqrt(n) shape is back.
 static const float sfx_poly_scale[SFX_VOICES + 1] =
 {
-    0.85f, 0.85f, 0.60f, 0.49f, 0.43f, 0.38f, 0.35f, 0.32f, 0.30f,
+    1.00f, 1.00f, 0.71f, 0.58f, 0.50f, 0.45f, 0.41f, 0.38f, 0.35f,
 };
 static int sfx_active_voices = -1;  // -1 forces the first I_SfxRebalance to apply
 
-static void I_SfxRebalance(void)
+// fresh_ch: a mixer channel that has just started a new sound (or -1). It
+// gets the new gain immediately; every voice that was already sounding
+// ramps to it over SFX_DECLICK instead. mixer_ch_set_gain is an instant
+// step, and applying one to every playing voice each time any sound started
+// or ended was itself a click on all of them.
+static void I_SfxRebalance(int fresh_ch)
 {
-    int ch, n;
+    int v, n;
     float g;
 
     n = 0;
-    for (ch = 0; ch < SFX_VOICES; ch++)
+    for (v = 0; v < SFX_VOICES; v++)
     {
-        if (mixer_ch_playing(ch))
+        if (I_VoiceActive(v))
         {
             n++;
         }
     }
-    if (n == sfx_active_voices)
+    if (n == sfx_active_voices && fresh_ch < 0)
     {
         return;
     }
     sfx_active_voices = n;
 
     g = (n > 0) ? sfx_poly_scale[n] : 1.0f;
-    for (ch = 0; ch < SFX_VOICES; ch++)
+    for (v = 0; v < SFX_VOICES; v++)
     {
-        if (mixer_ch_playing(ch))
+        if (I_VoiceActive(v))
         {
-            mixer_ch_set_gain(ch, g);
+            int ch = I_VoiceCh(v);
+            if (ch == fresh_ch)
+            {
+                mixer_ch_set_gain(ch, g);
+            }
+            else
+            {
+                mixer_ch_set_gain_ramp(ch, g, SFX_DECLICK, mixer_ramp_linear, 0);
+            }
         }
     }
 }
@@ -337,11 +552,14 @@ static void I_SfxRebalance(void)
 // actually pumps audio; nothing else calls into the mixer.
 void I_UpdateSound (void)
 {
+#if AUDIO_DEBUG
+    I_AudioDebugTick();
+#endif
     mixer_try_play();
 
     // Re-spread SFX headroom across however many are playing right now -
     // see I_SfxRebalance's comment.
-    I_SfxRebalance();
+    I_SfxRebalance(-1);
 }
 
 void I_SubmitSound (void)
@@ -513,26 +731,64 @@ int I_StartSound (
         return cnum;
     }
 
-    mixer_ch_play(cnum, &sfx_wave[id]);
-    mixer_ch_set_freq(cnum, I_SfxFreq(pitch));
-    I_SetSfxVolPan(cnum, vol, sep);
-    // mixer_ch_play doesn't reset gain, so a fresh sound starting on a
-    // channel last used while more voices were active (and thus scaled
-    // down) would otherwise inherit that stale, too-quiet gain until the
-    // next time the active voice count happens to change. Force the
-    // recompute so it's correct immediately, not just eventually.
-    sfx_active_voices = -1;
-    I_SfxRebalance();
+    waveform_t *wave = &sfx_wave[id];
+#if AUDIO_DEBUG
+    if (dbg_mode != DBG_NORMAL)
+    {
+        // Everything through voice 0, so only one sound is ever audible.
+        cnum = 0;
+    }
+    if (dbg_mode == DBG_ONE8A)
+    {
+        wave = I_AudioDebugCopy(id, 8);
+    }
+    else if (dbg_mode == DBG_ONE16)
+    {
+        wave = I_AudioDebugCopy(id, 16);
+    }
+#endif
+
+    int ch = I_VoiceCh(cnum);
+
+    // Fade out whatever this voice was playing instead of cutting it off
+    // (see SFX_VOICES), and start the new sound on the voice's other mixer
+    // channel. The faded one keeps running silently until its data ends.
+    if (mixer_ch_playing(ch))
+    {
+        mixer_ch_set_vol_ramp(ch, 0.0f, 0.0f, SFX_DECLICK);
+    }
+    voice_sub[cnum] ^= 1;
+    ch = I_VoiceCh(cnum);
+    voice_live[cnum] = 1;
+
+    mixer_ch_play(ch, wave);
+    mixer_ch_set_freq(ch, I_SfxFreq(pitch));
+    // Start from silence: mixer_ch_set_vol (in I_SetSfxVolPan) walks the
+    // volume from its current value over MIXER_DECLICK_SAMPLES, so zeroing
+    // it first turns that into a short fade-in - many of the WAD's sounds
+    // start on a non-zero sample (DSRXPLOD on -43), which clicks otherwise.
+    mixer_ch_set_vol_ramp(ch, 0.0f, 0.0f, 0);
+    I_SetSfxVolPan(ch, vol, sep);
+    // The new sound needs the current polyphony gain right away, not
+    // whatever the channel was last left at; the others ramp to it.
+    I_SfxRebalance(ch);
     return cnum;
 }
 
 /**********************************************************************/
-// Stops a sound channel.
+// Stops a sound channel - with a short fade-out rather than a hard stop,
+// which would click for the same reason a cut-off restart does (see
+// SFX_VOICES). Doom sees the voice as stopped immediately.
 void I_StopSound(int handle)
 {
     if (handle >= 0 && handle < SFX_VOICES)
     {
-        mixer_ch_stop(handle);
+        int ch = I_VoiceCh(handle);
+        if (mixer_ch_playing(ch))
+        {
+            mixer_ch_set_vol_ramp(ch, 0.0f, 0.0f, SFX_DECLICK);
+        }
+        voice_live[handle] = 0;
     }
 }
 
@@ -546,7 +802,7 @@ int I_SoundIsPlaying(int handle)
     {
         return 0;
     }
-    return mixer_ch_playing(handle) ? 1 : 0;
+    return I_VoiceActive(handle);
 }
 
 /**********************************************************************/
@@ -559,12 +815,13 @@ I_UpdateSoundParams
   int        sep,
   int        pitch )
 {
-    if (handle < 0 || handle >= SFX_VOICES || !mixer_ch_playing(handle))
+    if (handle < 0 || handle >= SFX_VOICES || !I_VoiceActive(handle))
     {
         return;
     }
-    mixer_ch_set_freq(handle, I_SfxFreq(pitch));
-    I_SetSfxVolPan(handle, vol, sep);
+    int ch = I_VoiceCh(handle);
+    mixer_ch_set_freq(ch, I_SfxFreq(pitch));
+    I_SetSfxVolPan(ch, vol, sep);
 }
 
 /**********************************************************************/
