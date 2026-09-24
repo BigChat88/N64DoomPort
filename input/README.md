@@ -10,6 +10,11 @@ Accepted (uppercase, matching the filename you pass as `IWAD_PREFIX`):
 * `DOOM2.WAD` — Doom II: Hell on Earth
 * `PLUTONIA.WAD` — Final Doom: The Plutonia Experiment
 * `TNT.WAD` — Final Doom: TNT Evilution
+* `CHEX.WAD` — Chex Quest, **plus `chex.deh`** in this same folder (its
+  DeHackEd patch, from
+  https://www.doomworld.com/idgames/themes/chex/chexdeh - the build stops
+  if it's missing). Any `<NAME>.deh` next to `<NAME>.WAD` is packed and
+  applied the same way.
 
 You can drop more than one in here at the same time (e.g. both `DOOM.WAD` and
 `DOOM2.WAD`) - `IWAD_PREFIX` picks which one a given build uses. See the repo

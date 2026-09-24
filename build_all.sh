@@ -27,7 +27,7 @@ export MSYS_NO_PATHCONV=1
 # engine falls back to gamemode "indetermined" for it, which isn't a
 # supported or tested configuration - expect menus/episode logic that branch
 # on gamemode to be wrong, not just cosmetic differences.
-KNOWN_PREFIXES=" DOOM1 DOOM DOOMU DOOM2 PLUTONIA TNT "
+KNOWN_PREFIXES=" DOOM1 DOOM DOOMU DOOM2 PLUTONIA TNT CHEX "
 
 force_music=0
 if [ "${1:-}" = "--force-music" ]; then
@@ -58,7 +58,7 @@ for wad in "${wads[@]}"; do
     # lump contents say unambiguously which one it really is, so prefer
     # that over the filename when they disagree.
     detected="$(python3 tools/identify_iwad.py "$wad" 2>/dev/null || echo UNKNOWN)"
-    if [[ "$detected" =~ ^(DOOM1|DOOM|DOOMU)$ ]] && [ "$detected" != "$prefix" ]; then
+    if [[ "$detected" =~ ^(DOOM1|DOOM|DOOMU|CHEX)$ ]] && [ "$detected" != "$prefix" ]; then
         echo "note: $base's contents say it's $detected, not $prefix (filename) - using $detected."
         prefix="$detected"
     fi

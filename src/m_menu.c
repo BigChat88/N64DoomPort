@@ -45,6 +45,7 @@
 
 
 #include "hu_stuff.h"
+#include "d_deh.h"
 
 #include "g_game.h"
 
@@ -1019,7 +1020,9 @@ void M_NewGame(int choice)
 	return;
     }
 
-    if ( gamemode == commercial )
+    // Chex Quest has a single episode: chex.exe went straight to skill
+    // select, like Doom II does.
+    if ( gamemode == commercial || chexquest )
 	M_SetupNextMenu(&NewDef);
     else
 	M_SetupNextMenu(&EpiDef);
@@ -1107,9 +1110,46 @@ void M_AdjustGamma(int choice)
     I_SetPalette (W_CacheLumpName ("PLAYPAL",PU_CACHE));
 }
 
+//
+// Text for this port's own menu additions (Video/Control Settings, Cheats),
+// which have no graphics in any IWAD. For Doom they use the port's thin
+// font and Doom-red title graphics (menulumps/, see w_wad.c). For Chex
+// Quest those would look like classic Doom next to Chex's own menu art, so
+// they use the WAD's own font instead (STCFN, redrawn by Chex) - the same
+// one its HUD messages use.
+//
+static void M_WriteAddedText(int x, int y, char *string)
+{
+    if (chexquest)
+	M_WriteText(x, y + 4, string);	// 8px font, centered in a 16px row
+    else
+	M_WriteThinText(x, y, string);
+}
+
+static int M_AddedTextWidth(char *string)
+{
+    return chexquest ? M_StringWidth(string) : M_ThinStringWidth(string);
+}
+
+// Chex Quest only: the text to draw instead of a menu row's X_ graphic
+// (see w_wad.c's menulumps), or NULL to draw the row's graphic as usual.
+static char *M_AddedLabel(char *lumpname)
+{
+    if (!chexquest)
+	return NULL;
+    if (!strcmp(lumpname, "X_VIDSET"))
+	return "Video Settings";
+    if (!strcmp(lumpname, "X_GAMMA"))
+	return "Gamma";
+    return NULL;
+}
+
 void M_DrawVideoSettings(void)
 {
-    V_DrawPatch (70,15,W_CacheLumpName("X_VIDTTL",PU_CACHE));
+    if (chexquest)
+	M_WriteAddedText(160 - M_AddedTextWidth("Video Settings")/2, 15, "Video Settings");
+    else
+	V_DrawPatch (70,15,W_CacheLumpName("X_VIDTTL",PU_CACHE));
 
     M_DrawThermo(VideoSettingsDef.x,VideoSettingsDef.y+LINEHEIGHT*(scrnsize+1),
                  9,screenSize);
@@ -1126,15 +1166,15 @@ void M_VideoSettings(int choice)
 
 void M_DrawControlSettings(void)
 {
-    M_WriteThinText(160 - M_ThinStringWidth("Control Settings")/2,15,"Control Settings");
+    M_WriteAddedText(160 - M_AddedTextWidth("Control Settings")/2,15,"Control Settings");
 
-    M_WriteThinText(ControlSettingsDef.x,ControlSettingsDef.y+LINEHEIGHT*controltype,
+    M_WriteAddedText(ControlSettingsDef.x,ControlSettingsDef.y+LINEHEIGHT*controltype,
                 controlTypeNames[control_type]);
 
     M_DrawThermo(ControlSettingsDef.x,ControlSettingsDef.y+LINEHEIGHT*(mousesens+1),
 		 10,mouseSensitivity);
 
-    M_WriteThinText(ControlSettingsDef.x,ControlSettingsDef.y+LINEHEIGHT*rumbletoggle,
+    M_WriteAddedText(ControlSettingsDef.x,ControlSettingsDef.y+LINEHEIGHT*rumbletoggle,
                 rumbleNames[rumble_enabled]);
 }
 
@@ -1206,7 +1246,7 @@ void M_DrawCheats(void)
 {
     int i;
 
-    M_WriteThinText(160 - M_ThinStringWidth("Cheats")/2, 15, "Cheats");
+    M_WriteAddedText(160 - M_AddedTextWidth("Cheats")/2, 15, "Cheats");
 
     for (i = 0; i < cheat_end; i++)
     {
@@ -1239,10 +1279,10 @@ void M_DrawOptions(void)
     V_DrawPatch (OptionsDef.x + 120,OptionsDef.y+LINEHEIGHT*messages,
 		       W_CacheLumpName(msgNames[showMessages],PU_CACHE));
 
-    M_WriteThinText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*controlset,
+    M_WriteAddedText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*controlset,
                 "Control Settings");
 
-    M_WriteThinText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*cheatopt,
+    M_WriteAddedText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*cheatopt,
                 "Cheats");
 }
 
@@ -1382,9 +1422,9 @@ void M_QuitDOOM(int choice)
   // We pick index 0 which is language sensitive,
   //  or one at random, between 1 and maximum number.
   if (language != english )
-    sprintf(endstring,"%s\n\n"DOSY, endmsg[0] );
+    sprintf(endstring,"%s\n\n"DOSY, DEH_String(endmsg[0]) );
   else
-    sprintf(endstring,"%s\n\n"DOSY, endmsg[ (gametic%(NUM_QUITMESSAGES-2))+1 ]);
+    sprintf(endstring,"%s\n\n"DOSY, DEH_String(endmsg[ (gametic%(NUM_QUITMESSAGES-2))+1 ]));
 
   M_StartMessage(endstring,(void*)M_QuitResponse,true);
 //M_QuitResponse('y');
@@ -1518,7 +1558,8 @@ M_StartMessage
 {
     messageLastMenuActive = menuactive;
     messageToPrint = 1;
-    messageString = string;
+    // dehacked patches reword menu prompts (new game, nightmare, end game...)
+    messageString = DEH_String(string);
     messageRoutine = routine;
     messageNeedsInput = input;
     menuactive = true;
@@ -2089,7 +2130,11 @@ void M_Drawer (void)
     for (i=0;i<max;i++)
     {
 	if (currentMenu->menuitems[i].name[0]) {
-	    V_DrawPatch (x,y,
+	    char *label = M_AddedLabel(currentMenu->menuitems[i].name);
+	    if (label)
+		M_WriteAddedText(x, y, label);
+	    else
+		V_DrawPatch (x,y,
 			       W_CacheLumpName(currentMenu->menuitems[i].name ,PU_CACHE));
 	}
 	y += lh;

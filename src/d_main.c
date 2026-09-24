@@ -65,6 +65,7 @@
 #include "r_local.h"
 
 #include "d_main.h"
+#include "d_deh.h"
 
 char shareware_banner[]  =    
                 "==================================\n"
@@ -672,12 +673,32 @@ char*    doom2wad = "DOOM2.WAD";
 char*    doom2fwad = "DOOM2F.WAD";
 char*    plutoniawad = "PLUTONIA.WAD";
 char*    tntwad = "TNT.WAD";
+char*    chexwad = "CHEX.WAD";
+
+boolean  chexquest = false;
 
 void IdentifyVersion(void)
 {
     const char *gameid = get_GAMEID();
 
     printf("IdentifyVersion: %s\n", gameid);
+
+    // Chex Quest: a retail-Doom IWAD with 5 levels in episode 1. What its
+    // chex.exe changed on top of doom.exe comes from two places: the text,
+    // monster and frame changes from its dehacked patch (d_deh.c, loaded in
+    // D_DoomMain), and the rest - which dehacked can't express - from
+    // chexquest checks: no episode menu (m_menu.c), game ends after E1M5 with
+    // Chex par times (g_game.c), monsters drop nothing (p_inter.c), damage
+    // tints green instead of red (st_stuff.c), level warp stays on E1M1-E1M5
+    // (i_input.c). Same list as Chocolate Doom's exe_chex handling.
+    if (!stricmp(chexwad,gameid))
+    {
+        gamemode = retail;
+        current_mode = commercial;
+        chexquest = true;
+        D_AddFile(chexwad);
+        return;
+    }
 
     if (!stricmp(doom2fwad,gameid))
     {
@@ -823,6 +844,10 @@ void D_DoomMain(void)
 
     printf ("W_Init: Init WADfiles.\n");
     W_InitMultipleFiles (wadfiles);
+
+    // A dehacked patch packed next to the WAD (Chex Quest's chex.deh - see
+    // d_deh.c). Before R_Init/S_Init: it may rename sprites and sounds.
+    DEH_LoadFile("dehacked.deh");
 
     // Check and print which version is executed.
     switch ( gamemode )

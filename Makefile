@@ -10,7 +10,7 @@
 #
 #   make IWAD_DIRECTORY=/path/to/wads IWAD_PREFIX=DOOM2
 #
-# IWAD_PREFIX must be one of: DOOM1, DOOM, DOOMU, DOOM2, PLUTONIA, TNT
+# IWAD_PREFIX must be one of: DOOM1, DOOM, DOOMU, DOOM2, PLUTONIA, TNT, CHEX
 # (uppercase, matching your IWAD filename, e.g. input/DOOM2.WAD).
 #
 # The resulting .z64 is written to output/ (see output/README.md) - ready to

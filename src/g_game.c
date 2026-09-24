@@ -1007,6 +1007,12 @@ int pars[4][10] =
 }; 
 
 // DOOM II Par Times
+// Chex Quest par times, E1M1-E1M5 (index 0 unused, like pars[][0])
+int chexpars[6] =
+{
+    0,120,360,480,200,360
+};
+
 int cpars[32] =
 {
     30,90,120,120,90,150,120,120,270,90,        //  1-10
@@ -1052,6 +1058,13 @@ void G_DoCompleted (void)
 
     if (automapactive) 
         AM_Stop (); 
+
+    // Chex Quest ends after its 5th level, not the 8th.
+    if (chexquest && gamemap == 5)
+    {
+        gameaction = ga_victory;
+        return;
+    }
 
     if ( gamemode != commercial)
     switch(gamemap)
@@ -1118,7 +1131,9 @@ void G_DoCompleted (void)
     wminfo.maxsecret = totalsecret; 
     wminfo.maxfrags = 0; 
     if ( gamemode == commercial )
-    wminfo.partime = 35*cpars[gamemap-1]; 
+    wminfo.partime = 35*cpars[gamemap-1];
+    else if (chexquest && gamemap <= 5)
+    wminfo.partime = 35*chexpars[gamemap];
     else
     wminfo.partime = 35*pars[gameepisode][gamemap]; 
     wminfo.pnum = consoleplayer; 
