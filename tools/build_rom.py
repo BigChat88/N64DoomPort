@@ -24,7 +24,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 
-KNOWN_PREFIXES = ("DOOM1", "DOOM", "DOOMU", "DOOM2", "PLUTONIA", "TNT")
+KNOWN_PREFIXES = ("DOOM1", "DOOM", "DOOMU", "DOOM2", "PLUTONIA", "TNT", "CHEX")
 
 
 def log(msg: str) -> None:
@@ -79,7 +79,7 @@ def detect_prefix(wad: Path) -> str:
     except subprocess.CalledProcessError:
         detected = "UNKNOWN"
 
-    if detected in ("DOOM1", "DOOM", "DOOMU") and detected != prefix:
+    if detected in ("DOOM1", "DOOM", "DOOMU", "CHEX") and detected != prefix:
         log(f"note: {wad.name}'s contents say it's {detected}, not {prefix} (filename) - using {detected}.")
         prefix = detected
 

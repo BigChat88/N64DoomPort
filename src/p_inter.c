@@ -747,6 +747,10 @@ P_KillMobj
     // Drop stuff.
     // This determines the kind of object spawned
     // during the death frame of a thing.
+    // In Chex Quest, monsters don't drop anything.
+    if (chexquest)
+	return;
+
     switch (target->type)
     {
       case MT_WOLFSS:

@@ -891,7 +891,9 @@ void n64_do_cheat(int cheat)
                     return;
                 }
 
-                if (current_map < 9)
+                // Chex Quest only has E1M1-E1M5: warping to E1M6 would load
+                // a map that isn't there.
+                if (current_map < (chexquest ? 5 : 9))
                 {
                     current_map++;
                 }

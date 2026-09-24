@@ -83,6 +83,7 @@ OBJS=						\
 		$(O)/f_finale.o			\
 		$(O)/f_wipe.o 			\
 		$(O)/d_main.o			\
+		$(O)/d_deh.o			\
 		$(O)/d_net.o			\
 		$(O)/d_items.o			\
 		$(O)/g_game.o			\
@@ -158,6 +159,19 @@ $(PROG_NAME).z64: $(PROG_NAME).elf.stripped
 	rm -f filesystem/*.WAD
 	cp $(IWAD_DIRECTORY)/$(IWAD_PREFIX).WAD filesystem
 	echo $(IWAD_PREFIX).WAD > filesystem/identifier
+	# Dehacked patch: <PREFIX>.DEH next to the WAD (any case) is packed as
+	# filesystem/dehacked.deh and applied at startup (see src/d_deh.c).
+	# Chex Quest needs its chex.deh - without it the game would play with
+	# Doom's texts - so that one is required, not optional.
+	rm -f filesystem/dehacked.deh
+	@deh="$$(find $(IWAD_DIRECTORY) -maxdepth 1 -iname '$(IWAD_PREFIX).deh' | head -n 1)"; \
+	if [ -n "$$deh" ]; then \
+		echo "dehacked patch: $$deh"; cp "$$deh" filesystem/dehacked.deh; \
+	elif [ "$(IWAD_PREFIX)" = "CHEX" ]; then \
+		echo "error: Chex Quest needs its dehacked patch: put chex.deh next to CHEX.WAD"; \
+		echo "  (from https://www.doomworld.com/idgames/themes/chex/chexdeh)"; \
+		exit 1; \
+	fi
 	# Music: pack the pre-rendered WAVs for this IWAD (see
 	# tools/render_music.py) as looping, Opus-compressed wav64 files.
 	# These aren't rendered here - see MUSIC_WAV_DIR's comment - so fail

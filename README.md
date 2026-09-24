@@ -33,6 +33,13 @@ The build accepts, dropped into `input/`:
 * **`DOOM2.WAD`** — Doom II: Hell on Earth
 * **`PLUTONIA.WAD`** — Final Doom: The Plutonia Experiment
 * **`TNT.WAD`** — Final Doom: TNT Evilution
+* **`CHEX.WAD`** — Chex Quest (the original 1996 game). Also needs
+  **`chex.deh`** next to it: the community-made DeHackEd patch that
+  reproduces what Chex's own executable changed (level names, pickup
+  messages, finale text), free from
+  [/idgames](https://www.doomworld.com/idgames/themes/chex/chexdeh). The
+  build refuses to pack Chex Quest without it. Chex Quest 2 and 3 aren't
+  supported.
 
 ## What you need
 

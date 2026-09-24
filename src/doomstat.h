@@ -59,6 +59,10 @@ extern  boolean	devparm;	// DEBUG: launched with -devparm
 // Game Mode - identify IWAD as shareware, retail etc.
 //
 extern GameMode_t	gamemode;
+
+// Chex Quest (CHEX.WAD): runs as retail Doom plus the chex.exe differences
+// that its dehacked patch can't express - see IdentifyVersion in d_main.c.
+extern boolean	chexquest;
 extern GameMission_t	gamemission;
 
 // Set if homebrew PWAD stuff has been added.

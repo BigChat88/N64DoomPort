@@ -30,6 +30,7 @@
 #include "m_swap.h"
 
 #include "hu_stuff.h"
+#include "d_deh.h"
 #include "hu_lib.h"
 #include "w_wad.h"
 
@@ -466,6 +467,8 @@ void HU_Start(void)
 	{
 		s = HU_TITLE;
 	}
+	// dehacked patches rename levels (Chex Quest's E1M1-E1M5)
+	s = DEH_String(s);
     while (*s)
 		HUlib_addCharToTextLine(&w_title, *(s++));
 
@@ -515,7 +518,8 @@ void HU_Ticker(void)
 		if ((plr->message && !message_nottobefuckedwith)
 			|| (plr->message && message_dontfuckwithme))
 		{
-			HUlib_addMessageToSText(&w_message, 0, plr->message);
+			// DEH_String: dehacked patches reword pickup/cheat messages
+			HUlib_addMessageToSText(&w_message, 0, DEH_String(plr->message));
 			plr->message = 0;
 			message_on = true;
 			message_counter = HU_MSGTIMEOUT;

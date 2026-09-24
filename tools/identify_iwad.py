@@ -18,10 +18,23 @@ build_all.sh keeps using the filename for those, same as it always did.
 
 Usage:
     python3 identify_iwad.py path/to/some.wad
-Prints one of DOOM1, DOOM, DOOMU, COMMERCIAL, or UNKNOWN.
+Prints one of DOOM1, DOOM, DOOMU, CHEX, COMMERCIAL, or UNKNOWN.
 """
+import hashlib
 import struct
 import sys
+from pathlib import Path
+
+# chex.wad as shipped with Chex Quest (1996) - note its header says PWAD.
+CHEX_SHA1 = {"eca9cff1014ce5081804e193588d96c6ddb35432"}
+
+
+def file_sha1(path):
+    h = hashlib.sha1()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
 def load_lump_names(wad_path):
@@ -46,6 +59,12 @@ def identify(wad_path):
     if not names:
         return "UNKNOWN"
 
+    # Chex Quest can't be told apart by its maps: only E1M1-E1M5 are real,
+    # but chex.wad fills every slot up to E4M9 with copies, so it looks
+    # exactly like The Ultimate Doom's lump list. Recognize the one
+    # released chex.wad by its hash, or anything named CHEX.WAD.
+    if file_sha1(wad_path) in CHEX_SHA1 or Path(wad_path).stem.upper() == "CHEX":
+        return "CHEX"
     if "E4M1" in names:
         return "DOOMU"
     if "E2M1" in names:

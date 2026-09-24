@@ -40,6 +40,7 @@
 #include "r_state.h"
 
 #include "doomdef.h"
+#include "d_deh.h"
 
 #define ytab(y) (((y)<<8)+((y)<<6))
 
@@ -183,6 +184,9 @@ void F_StartFinale (void)
     finaletext = c1text;  // FIXME - other text, music?
     break;
     }
+
+    // dehacked patches reword the end-of-episode text (Chex Quest's E1TEXT)
+    finaletext = DEH_String(finaletext);
 
     finalestage = 0;
     finalecount = 0;

@@ -32,12 +32,12 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 
-KNOWN_PREFIXES = ("DOOM1", "DOOM", "DOOMU", "DOOM2", "PLUTONIA", "TNT")
+KNOWN_PREFIXES = ("DOOM1", "DOOM", "DOOMU", "DOOM2", "PLUTONIA", "TNT", "CHEX")
 
 # Loose, non-WAD assets baked into every ROM (menu graphics, boot animation)
 # - everything in src/filesystem/ except the per-IWAD pieces this script
 # fills in itself (the WAD, its "identifier" stamp, and its music).
-STATIC_FS_SKIP = {"mus"}
+STATIC_FS_SKIP = {"mus", "dehacked.deh"}
 STATIC_FS_SKIP_SUFFIX = (".WAD",)
 
 TOOL_NAMES = ("mkdfs", "n64tool", "audioconv64")
@@ -126,6 +126,25 @@ def stage_static_filesystem(dest: Path) -> None:
             shutil.copy2(item, dest / item.name)
 
 
+def find_deh(explicit: Path | None, wad: Path, prefix: str) -> Path | None:
+    """The dehacked patch to pack with this IWAD: --deh, or <prefix>.deh (any
+    case) next to the WAD. Chex Quest requires one (chex.deh) - see
+    src/d_deh.c for what it carries - every other IWAD packs without one."""
+    if explicit:
+        if not explicit.is_file():
+            die(f"{explicit}: no such file")
+        return explicit
+    for c in sorted(wad.parent.iterdir()):
+        if c.is_file() and c.name.lower() == f"{prefix.lower()}.deh":
+            return c
+    if prefix == "CHEX":
+        die(
+            f"Chex Quest needs its dehacked patch: put chex.deh next to {wad.name}\n"
+            "  (from https://www.doomworld.com/idgames/themes/chex/chexdeh), or pass --deh"
+        )
+    return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Pack your own IWAD + prebuilt engine into a Nintendo 64 ROM.")
@@ -138,6 +157,9 @@ def main() -> None:
     ap.add_argument("--music-dir", type=Path, default=None,
                     help="dir of <lump>.wav files rendered by "
                          "tools/render_music.py (default: music_wav/<prefix>)")
+    ap.add_argument("--deh", type=Path, default=None,
+                    help="dehacked patch to apply (default: <prefix>.deh next "
+                         "to the WAD, if any; required for CHEX)")
     ap.add_argument("--out", type=Path, default=None,
                     help="output ROM path (default: output/<prefix>.z64)")
     ap.add_argument("--title", default=None,
@@ -167,6 +189,8 @@ def main() -> None:
             f"  python3 tools/render_music.py {wad} -o {music_dir}"
         )
 
+    deh = find_deh(args.deh, wad, args.prefix)
+
     out = args.out or (ROOT / "output" / f"{args.prefix}.z64")
     title = (args.title or args.prefix)[:20]
 
@@ -174,6 +198,8 @@ def main() -> None:
     tools = {t: find_tool(t, args.tools_dir) for t in TOOL_NAMES}
     log(f"wad    : {wad}")
     log(f"music  : {music_dir}  ({len(music_wavs)} track(s))")
+    if deh:
+        log(f"deh    : {deh}")
     log(f"engine : {elf}")
     for t, p in tools.items():
         log(f"tool   : {t:12s} {p}")
@@ -186,6 +212,8 @@ def main() -> None:
         stage_static_filesystem(fsroot)
         shutil.copy2(wad, fsroot / f"{args.prefix}.WAD")
         (fsroot / "identifier").write_text(f"{args.prefix}.WAD\n")
+        if deh:
+            shutil.copy2(deh, fsroot / "dehacked.deh")
 
         log("[2/4] audioconv64 -> mus/*.wav64")
         mus_out = fsroot / "mus"

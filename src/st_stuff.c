@@ -1080,6 +1080,11 @@ void ST_doPaletteStuff(void)
     else
         palette = 0;
 
+    // Chex Quest never flashes red on damage: it uses the radiation suit's
+    // green tint instead, as if the player were being slimed.
+    if (chexquest && palette >= STARTREDPALS && palette < STARTREDPALS + NUMREDPALS)
+        palette = RADIATIONPAL;
+
     if (palette != st_palette)
     {
         st_palette = palette;
