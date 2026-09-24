@@ -22,6 +22,7 @@
 //-----------------------------------------------------------------------------
 
 #include <stdlib.h>
+#include <malloc.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -170,7 +171,12 @@ byte* I_AllocLow(int length)
 {
     byte* mem;
 
-    mem = (byte *)malloc(length);
+    // Only used for the screen buffers (V_Init), which the RDP reads and
+    // i_video.c accesses through both the cached and uncached views: they
+    // must own whole 16-byte data cache lines, or a cache writeback of a
+    // neighbouring allocation sharing a line could land on top of pixels
+    // (and vice versa).
+    mem = (byte *)memalign(16, (length + 15) & ~15);
 
     return mem;
 }

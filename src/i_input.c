@@ -27,6 +27,7 @@
 
 #include "i_input.h"
 #include "i_sound.h"
+#include "i_video.h"
 
 #include "doomstat.h"
 #include "i_system.h"
@@ -350,6 +351,24 @@ void pressed_key(joypad_buttons_t *p_data) //, int player)
 {
     event_t doom_input_event;
     joypad_buttons_t pressed = *p_data;
+
+#if PERF_DEBUG
+    // Performance build: L+D-Left / L+D-Right flip the two framebuffer
+    // speedups (see i_video.c) instead of their normal D-Pad action.
+    if (joypad_get_buttons_held(JOYPAD_PORT_1).l)
+    {
+        if (pressed.d_left)
+        {
+            I_PerfToggleFramebuffer();
+            pressed.d_left = 0;
+        }
+        if (pressed.d_right)
+        {
+            I_PerfToggleBlit();
+            pressed.d_right = 0;
+        }
+    }
+#endif
 
     if (control_type == 0)
     {

@@ -55,6 +55,24 @@ void I_SetPalette (byte* palette);
 void I_UpdateNoBlit (void);
 void I_FinishUpdate (void);
 
+// Waits for the RDP to finish reading the previous frame out of screens[0],
+// if it may still be doing so (see blit_async in i_video.c). Must run before
+// anything draws into screens[0] again - D_Display calls it first thing.
+void I_WaitBlit (void);
+
+// Performance overlay: FPS and per-phase frame times drawn in the top-left
+// corner, plus in-game switches for the two speedups in i_video.c
+// (L+D-Left: cached framebuffer on/off, L+D-Right: async blit on/off) so
+// their effect can be compared on real hardware. Keep at 0 for normal
+// builds - those button combos replace the D-Pad's normal action.
+#define PERF_DEBUG 0
+#if PERF_DEBUG
+void I_PerfFrame (uint32_t tic_ticks, uint32_t sound_ticks, uint32_t display_ticks);
+void I_PerfDraw (void);
+void I_PerfToggleFramebuffer (void);
+void I_PerfToggleBlit (void);
+#endif
+
 // Wait for vertical retrace or pause a bit.
 void I_WaitVBL(int count);
 

@@ -30,6 +30,7 @@
 #include "v_video.h"
 #include "m_argv.h"
 #include "d_main.h"
+#include "i_video.h"
 
 #include "z_zone.h"
 #include "w_wad.h"
@@ -64,6 +65,78 @@ static uint16_t *palarray;
 
 // See i_video.h - true once I_InitGraphics has called display_init().
 int display_ready = 0;
+
+// Which view of screens[0]/[1] Doom's software renderer draws through.
+// Uncached (0xA0000000, the default) is the faster one, measured on real
+// hardware with PERF_DEBUG: the cached view was clearly slower. Doom draws
+// walls and sprites as vertical columns, one byte every 320, and the
+// VR4300's 8KB direct-mapped D-cache allocates a line on every store miss -
+// so nearly each pixel of a column cost a 16-byte line *read* from RDRAM
+// (plus its later writeback), and the framebuffer evicted the textures and
+// colormaps the renderer was reading. Uncached stores just go out through
+// the write buffer. The cached path (a writeback of the whole frame before
+// the blit) is kept only so PERF_DEBUG can still compare the two.
+static int fb_cached = 0;
+
+// rdpq_detach_show() only queues the blit; the RDP then reads screens[0]
+// while the CPU carries on. Waiting for it right there (rspq_wait) idled the
+// CPU for the whole blit every frame. With blit_async the wait moves to the
+// start of the next D_Display instead (I_WaitBlit), so the blit overlaps
+// the game tics and audio that run in between.
+static int blit_async = 1;
+static int blit_pending = 0;
+
+#if PERF_DEBUG
+static uint32_t perf_wait_ticks;
+#endif
+
+static void *I_CachedView(void *p)
+{
+    return (void *)(((uintptr_t)p & 0x1FFFFFFF) | 0x80000000);
+}
+
+static void *I_UncachedView(void *p)
+{
+    return (void *)(((uintptr_t)p & 0x1FFFFFFF) | 0xA0000000);
+}
+
+// Points screens[]/bufptr at the cached or uncached view per fb_cached.
+// Writing back and invalidating first matters when switching away from the
+// cached view: dirty lines still in the cache would otherwise be written
+// back later, on top of newer uncached writes.
+static void I_ApplyFramebufferMode(void)
+{
+    data_cache_hit_writeback_invalidate(I_CachedView(screens[0]), SCREENWIDTH*SCREENHEIGHT);
+    data_cache_hit_writeback_invalidate(I_CachedView(screens[1]), SCREENWIDTH*SCREENHEIGHT);
+
+    if (fb_cached)
+    {
+        screens[0] = I_CachedView(screens[0]);
+        screens[1] = I_CachedView(screens[1]);
+    }
+    else
+    {
+        screens[0] = I_UncachedView(screens[0]);
+        screens[1] = I_UncachedView(screens[1]);
+    }
+    bufptr = screens[0];
+}
+
+void I_WaitBlit(void)
+{
+    if (!blit_pending)
+    {
+        return;
+    }
+#if PERF_DEBUG
+    uint32_t t = get_ticks();
+#endif
+    rspq_wait();
+#if PERF_DEBUG
+    perf_wait_ticks += get_ticks() - t;
+#endif
+    blit_pending = 0;
+}
 
 surface_t *lockVideo(int wait)
 {
@@ -107,8 +180,6 @@ void I_FinishUpdate(void)
     disp = display_get();
     // Attach the RDP to the display buffer
     rdpq_attach_clear(disp, NULL);
-    // we do all drawing to uncached view of bufptr
-    //data_cache_hit_writeback(bufptr, SCREENWIDTH*SCREENHEIGHT);
 
     // Doom's renderer assumes a single persistent framebuffer and only
     // redraws the parts of the screen that changed (status bar digits,
@@ -122,6 +193,13 @@ void I_FinishUpdate(void)
     // single software buffer instead; the hardware double buffering
     // from display_get()/rdpq_detach_show() still gives us tear-free
     // presentation.
+    // The frame may still be sitting in the data cache (see fb_cached):
+    // the RDP reads RDRAM directly, so flush it there first.
+    if (fb_cached)
+    {
+        data_cache_hit_writeback(screens[0], SCREENWIDTH*SCREENHEIGHT);
+    }
+
     surface_t src = surface_make(screens[0], FMT_CI8, SCREENWIDTH, SCREENHEIGHT, SCREENWIDTH);
     rdpq_tex_blit(&src, 0, 0, NULL);
 
@@ -139,8 +217,13 @@ void I_FinishUpdate(void)
     // That race is intermittent and tends to hit whatever was drawn last
     // (e.g. the status bar face/ammo widgets), which is what made them
     // flicker/disappear. Block until the RDP has fully consumed screens[0]
-    // before handing control back.
-    rspq_wait();
+    // before anything draws into it again - with blit_async that wait is
+    // deferred to I_WaitBlit at the start of the next D_Display.
+    blit_pending = 1;
+    if (!blit_async)
+    {
+        I_WaitBlit();
+    }
     return;
 #endif
 }
@@ -241,21 +324,119 @@ void I_InitGraphics(void)
         *VI_Y_SCALE_REG = (1024 * (SCREENHEIGHT-1)) / (active_lines-1);
     }
 
+    // Cap presentation at 30 FPS: exactly every other refresh on a 60 Hz TV,
+    // so frames reach the screen at an even pace instead of the irregular
+    // 1-or-2-refresh cadence of anything between 30 and 60 (Doom itself
+    // tops out at 35). display_get() in I_FinishUpdate waits when needed.
+    // Game logic still runs at Doom's 35 tics/s (TryRunTics catches up by
+    // running two tics in some frames), so game speed is unchanged.
+    display_set_fps_limit(30);
+
     rdpq_init();
     // Set copy render mode, with palette lookup
     rdpq_set_mode_copy(false);
     rdpq_mode_tlut(TLUT_RGBA16);
 
-    // use uncached everywhere so we don't have to writeback every time we submit the screen or palette
-    screens[0] = (void*)((uintptr_t)screens[0] | 0xA0000000);
-    screens[1] = (void*)((uintptr_t)screens[1] | 0xA0000000);
+    // The palette stays uncached: it's tiny and rarely written, and the RDP
+    // reads it directly (rdpq_tex_upload_tlut).
     palarray = (uint16_t *)((uintptr_t)current_palarray | 0xA0000000);
 
     I_SetDefaultPalette();
 
-    bufptr = screens[0];
+    I_ApplyFramebufferMode();
 
     display_ready = 1;
 
     printf("I_InitGraphics: Initialized display and RDPQ.\n");
 }
+
+#if PERF_DEBUG
+//
+// Performance overlay (see PERF_DEBUG in i_video.h). Times are averaged over
+// one second and shown in milliseconds per frame:
+//   TIC  - game tics, input and the wait for the next tic (TryRunTics): at
+//          the 35 FPS cap most of this is idle waiting, below it it's ~0
+//   SND  - positional sound updates and the mixer pump (I_UpdateSound)
+//   REN  - D_Display: drawing the frame and submitting it, WAIT included
+//   WAIT - time the CPU sat idle for the RDP to finish a blit
+//
+extern void M_WriteText(int x, int y, char *string);
+
+static char perf_line[3][48];
+static uint32_t perf_frames, perf_start;
+static uint64_t perf_sum[3], perf_wait_sum;
+
+static int perf_hundredths(uint64_t ticks, uint32_t frames)
+{
+    // ticks per frame -> hundredths of a millisecond
+    return (int)(TICKS_TO_US(ticks / frames) / 10);
+}
+
+void I_PerfFrame(uint32_t tic_ticks, uint32_t sound_ticks, uint32_t display_ticks)
+{
+    uint32_t now = get_ticks();
+
+    perf_sum[0] += tic_ticks;
+    perf_sum[1] += sound_ticks;
+    perf_sum[2] += display_ticks;
+    perf_wait_sum += perf_wait_ticks;
+    perf_wait_ticks = 0;
+    perf_frames++;
+
+    if (perf_start == 0)
+    {
+        perf_start = now;
+        return;
+    }
+    if (TICKS_DISTANCE(perf_start, now) < TICKS_PER_SECOND)
+    {
+        return;
+    }
+
+    int fps10 = (int)((uint64_t)perf_frames * 10 * TICKS_PER_SECOND / TICKS_DISTANCE(perf_start, now));
+    int t = perf_hundredths(perf_sum[0], perf_frames);
+    int s = perf_hundredths(perf_sum[1], perf_frames);
+    int r = perf_hundredths(perf_sum[2], perf_frames);
+    int w = perf_hundredths(perf_wait_sum, perf_frames);
+
+    heap_stats_t heap;
+    sys_get_heap_stats(&heap);
+
+    snprintf(perf_line[0], sizeof(perf_line[0]), "FPS %d.%d  FB %s  BLIT %s",
+             fps10 / 10, fps10 % 10,
+             fb_cached ? "CACHED" : "UNCACHED", blit_async ? "ASYNC" : "SYNC");
+    snprintf(perf_line[1], sizeof(perf_line[1]), "TIC %d.%02d SND %d.%02d REN %d.%02d",
+             t / 100, t % 100, s / 100, s % 100, r / 100, r % 100);
+    snprintf(perf_line[2], sizeof(perf_line[2]), "WAIT %d.%02d MS  FREE %dK",
+             w / 100, w % 100, (heap.total - heap.used) / 1024);
+
+    perf_frames = 0;
+    perf_sum[0] = perf_sum[1] = perf_sum[2] = 0;
+    perf_wait_sum = 0;
+    perf_start = now;
+}
+
+void I_PerfDraw(void)
+{
+    for (int i = 0; i < 3; i++)
+    {
+        if (perf_line[i][0])
+        {
+            M_WriteText(2, 2 + i * 9, perf_line[i]);
+        }
+    }
+}
+
+void I_PerfToggleFramebuffer(void)
+{
+    I_WaitBlit();
+    fb_cached = !fb_cached;
+    I_ApplyFramebufferMode();
+}
+
+void I_PerfToggleBlit(void)
+{
+    I_WaitBlit();
+    blit_async = !blit_async;
+}
+#endif
