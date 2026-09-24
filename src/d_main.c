@@ -222,8 +222,12 @@ void D_Display(void)
     if (nodrawers)
     {
         // for comparative timing / profiling
-        return;    
+        return;
     }
+
+    // The RDP may still be reading last frame out of screens[0] (see
+    // blit_async in i_video.c) - everything below draws into it.
+    I_WaitBlit();
 
     redrawsbar = false;
 
@@ -364,6 +368,10 @@ void D_Display(void)
 
     NetUpdate(); // send out any new accumulation
 
+#if PERF_DEBUG
+    I_PerfDraw();
+#endif
+
 //    if (!wipe)
 //    {
     I_FinishUpdate();
@@ -416,6 +424,9 @@ void D_DoomLoop(void)
 
     while (!return_from_D_DoomMain)
     {
+#if PERF_DEBUG
+        uint32_t perf_t0 = get_ticks();
+#endif
         //I_StartFrame();
         // process one or more tics
         if (singletics)
@@ -436,6 +447,9 @@ void D_DoomLoop(void)
         {
             TryRunTics(); // will run at least one tic
         }
+#if PERF_DEBUG
+        uint32_t perf_t1 = get_ticks();
+#endif
 
         S_UpdateSounds(players[consoleplayer].mo);// move positional sounds
 
@@ -443,8 +457,15 @@ void D_DoomLoop(void)
         // this; without it the mixer's output buffer starves and audio
         // stutters/stops even though channels are still "playing".
         I_UpdateSound();
+#if PERF_DEBUG
+        uint32_t perf_t2 = get_ticks();
+#endif
 
         D_Display();
+#if PERF_DEBUG
+        uint32_t perf_t3 = get_ticks();
+        I_PerfFrame(perf_t1 - perf_t0, perf_t2 - perf_t1, perf_t3 - perf_t2);
+#endif
     }
 }
 

@@ -24,7 +24,11 @@ AUDIOCONV64 = $(ROOTDIR)/bin/audioconv64
 MUSIC_WAV_DIR = $(CURDIR)/../music_wav/$(IWAD_PREFIX)
 LIBS = -ldragon -lc -lm -ldragonsys
 PROG_NAME = $(IWAD_PREFIX)
-OPTFLAG = -O3
+# -O2, not -O3: measured faster on real hardware (PERF_DEBUG overlay, same
+# spot in DOOM2). -O3's extra inlining and unrolling makes the code bigger,
+# and the VR4300 only has a 16KB instruction cache - the renderer's hot
+# loops fit it better at -O2.
+OPTFLAG = -O2
 
 
 
