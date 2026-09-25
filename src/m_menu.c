@@ -1115,20 +1115,103 @@ void M_AdjustGamma(int choice)
 // which have no graphics in any IWAD. For Doom they use the port's thin
 // font and Doom-red title graphics (menulumps/, see w_wad.c). For Chex
 // Quest those would look like classic Doom next to Chex's own menu art, so
-// they use the WAD's own font instead (STCFN, redrawn by Chex) - the same
-// one its HUD messages use.
+// they use Chex's own menu font instead - see chexGlyphs below.
 //
+
+//
+// Chex Quest menu font. Like the port's thin font for Doom (see
+// tools/gen_thinfont.py), these are single letters cropped out of the
+// WAD's own whole-word menu graphics - but at runtime, from whichever WAD is
+// loaded, so no Chex artwork is copied into the engine: the table only
+// holds where each letter sits. Column ranges include each letter's drop
+// shadow, so letters are simply laid side by side; ranges were found by
+// splitting each word at the start of each letter's bright body, then
+// checked by composing every string below and viewing it enlarged. Chex
+// Quest 2 ships the same graphics. Covers the letters the port's own menu
+// texts use (Video/Control Settings, Gamma, Type I/II, Rumble, Cheats).
+//
+typedef struct
+{
+    char	ch;
+    char	lump[9];
+    short	x0, x1;		// column range, x1 exclusive
+} chexglyph_t;
+
+static const chexglyph_t chexGlyphs[] =
+{
+    {'A', "M_SAVEG",  10,  20},	// "SAVE GAME"
+    {'B', "M_HURT",   20,  30},	// "GOBS OF GOO"
+    {'C', "M_SFXVOL", 89,  99},	// "SOUND EFFECTS VOLUME"
+    {'D', "M_SVOL",   43,  53},	// "SOUND VOLUME"
+    {'E', "M_SFXVOL", 57,  65},
+    {'G', "M_SAVEG",  47,  57},
+    {'H', "M_SKILL",  10,  21},	// "CHOOSE DIFFICULTY:"
+    {'I', "M_OPTION", 30,  35},	// "OPTIONS"
+    {'L', "M_SVOL",   80,  88},
+    {'M', "M_SAVEG",  68,  82},
+    {'N', "M_OPTION", 47,  59},
+    {'O', "M_OPTION", 36,  46},
+    {'P', "M_OPTION", 11,  21},
+    {'R', "M_RDTHIS",  0,  11},	// "READ THIS!"
+    {'S', "M_SFXVOL",108, 117},	// word-final, so its shadow ends cleanly
+    {'T', "M_SFXVOL", 99, 108},
+    {'U', "M_SVOL",   21,  31},
+    {'V', "M_SVOL",   59,  69},
+    {'Y', "M_JKILL",  28,  38},	// "EASY DOES IT"
+    {':', "M_MESSG",  78,  82},	// "MESSAGES:"
+};
+
+#define CHEX_SPACE 8	// word gap in the WAD's own menu graphics
+
+static const chexglyph_t *M_ChexGlyph(char c)
+{
+    int i;
+
+    c = toupper(c);
+    for (i = 0; i < (int)(sizeof(chexGlyphs)/sizeof(chexGlyphs[0])); i++)
+	if (chexGlyphs[i].ch == c)
+	    return &chexGlyphs[i];
+    return NULL;
+}
+
+static int M_ChexTextWidth(char *string)
+{
+    int w = 0;
+
+    for ( ; *string; string++)
+    {
+	const chexglyph_t *g = M_ChexGlyph(*string);
+	w += g ? g->x1 - g->x0 : CHEX_SPACE;
+    }
+    return w;
+}
+
+static void M_WriteChexText(int x, int y, char *string)
+{
+    for ( ; *string; string++)
+    {
+	const chexglyph_t *g = M_ChexGlyph(*string);
+	if (!g)
+	{
+	    x += CHEX_SPACE;
+	    continue;
+	}
+	V_DrawPatchColumns(x, y, W_CacheLumpName((char *)g->lump, PU_CACHE), g->x0, g->x1);
+	x += g->x1 - g->x0;
+    }
+}
+
 static void M_WriteAddedText(int x, int y, char *string)
 {
     if (chexquest)
-	M_WriteText(x, y + 4, string);	// 8px font, centered in a 16px row
+	M_WriteChexText(x, y, string);
     else
 	M_WriteThinText(x, y, string);
 }
 
 static int M_AddedTextWidth(char *string)
 {
-    return chexquest ? M_StringWidth(string) : M_ThinStringWidth(string);
+    return chexquest ? M_ChexTextWidth(string) : M_ThinStringWidth(string);
 }
 
 // Chex Quest only: the text to draw instead of a menu row's X_ graphic
@@ -1248,6 +1331,7 @@ void M_DrawCheats(void)
 
     M_WriteAddedText(160 - M_AddedTextWidth("Cheats")/2, 15, "Cheats");
 
+    // The rows use the small HUD font in every game, Chex Quest included.
     for (i = 0; i < cheat_end; i++)
     {
         M_WriteText(CheatDef.x, CheatDef.y + CheatDef.lineheight*i, cheatMenuLabels[i]);

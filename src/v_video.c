@@ -366,3 +366,50 @@ void V_Init (void)
     screens[0] = I_AllocLow (SCREENWIDTH*SCREENHEIGHT);
     screens[1] = I_AllocLow (SCREENWIDTH*SCREENHEIGHT);
 }
+
+
+
+//
+// V_DrawPatchColumns
+// Draws columns [x0, x1) of a patch, the first of them at screen column x.
+// Clipped to the screen and to the patch's own width.
+//
+void
+V_DrawPatchColumns
+( int		x,
+  int		y,
+  patch_t*	patch,
+  int		x0,
+  int		x1 )
+{
+    int		col;
+    column_t*	column;
+
+    y -= SHORT(patch->topoffset);
+    if (x1 > SHORT(patch->width))
+	x1 = SHORT(patch->width);
+
+    for (col = x0; col < x1; col++, x++)
+    {
+	if (x < 0 || x >= SCREENWIDTH)
+	    continue;
+
+	column = (column_t *)((byte *)patch + LONG(patch->columnofs[col]));
+
+	while (column->topdelta != 0xff)
+	{
+	    byte *source = (byte *)column + 3;
+	    int dy = y + column->topdelta;
+	    int count = column->length;
+
+	    while (count--)
+	    {
+		if (dy >= 0 && dy < SCREENHEIGHT)
+		    ((byte *)bufptr)[dy * SCREENWIDTH + x] = *source;
+		source++;
+		dy++;
+	    }
+	    column = (column_t *)((byte *)column + column->length + 4);
+	}
+    }
+}

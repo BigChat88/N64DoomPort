@@ -695,6 +695,9 @@ char*    doom2fwad = "DOOM2F.WAD";
 char*    plutoniawad = "PLUTONIA.WAD";
 char*    tntwad = "TNT.WAD";
 char*    chexwad = "CHEX.WAD";
+// Chex Quest 2: chex2.wad merged onto chex.wad at build time (see
+// tools/merge_wad.py) - same game rules and dehacked patch as Chex Quest.
+char*    chex2wad = "CHEX2.WAD";
 
 boolean  chexquest = false;
 
@@ -712,12 +715,12 @@ void IdentifyVersion(void)
     // Chex par times (g_game.c), monsters drop nothing (p_inter.c), damage
     // tints green instead of red (st_stuff.c), level warp stays on E1M1-E1M5
     // (i_input.c). Same list as Chocolate Doom's exe_chex handling.
-    if (!stricmp(chexwad,gameid))
+    if (!stricmp(chexwad,gameid) || !stricmp(chex2wad,gameid))
     {
         gamemode = retail;
         current_mode = commercial;
         chexquest = true;
-        D_AddFile(chexwad);
+        D_AddFile(stricmp(chexwad,gameid) ? chex2wad : chexwad);
         return;
     }
 
