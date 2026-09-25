@@ -19,12 +19,13 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 
-KNOWN_PREFIXES = ("DOOM1", "DOOM", "DOOMU", "DOOM2", "PLUTONIA", "TNT", "CHEX")
+KNOWN_PREFIXES = ("DOOM1", "DOOM", "DOOMU", "DOOM2", "PLUTONIA", "TNT", "CHEX", "CHEX2")
 
 
 def log(msg: str) -> None:
@@ -58,7 +59,8 @@ def find_wad(explicit: Path | None) -> Path:
         die(f"no IWAD found in {indir}\n  see input/README.md - drop your IWAD there and try again")
     if len(cands) > 1:
         names = ", ".join(c.name for c in cands)
-        die(f"more than one WAD in {indir} ({names})\n  pass --wad to pick one, e.g. --wad input/DOOM2.WAD")
+        die(f"more than one WAD in {indir} ({names})\n  pass --wad to pick one, e.g. --wad input/DOOM2.WAD\n"
+            f"  (Chex Quest 2 needs CHEX.WAD there too: build it with --wad input/CHEX2.WAD)")
     return cands[0]
 
 
@@ -79,7 +81,7 @@ def detect_prefix(wad: Path) -> str:
     except subprocess.CalledProcessError:
         detected = "UNKNOWN"
 
-    if detected in ("DOOM1", "DOOM", "DOOMU", "CHEX") and detected != prefix:
+    if detected in ("DOOM1", "DOOM", "DOOMU", "CHEX", "CHEX2") and detected != prefix:
         log(f"note: {wad.name}'s contents say it's {detected}, not {prefix} (filename) - using {detected}.")
         prefix = detected
 
@@ -100,9 +102,21 @@ def ensure_music(prefix: str, wad: Path, force: bool) -> None:
         return
 
     log("rendering music (needs fluidsynth + ffmpeg on PATH)...")
-    rv = subprocess.run(
-        [sys.executable, str(HERE / "render_music.py"), str(wad), "-o", str(music_dir)],
-    )
+    with tempfile.TemporaryDirectory() as tmp:
+        render_wad = wad
+        if prefix == "CHEX2":
+            # CHEX2.WAD only carries the tracks it replaces: render from it
+            # merged onto CHEX.WAD, the same WAD pack_rom.py packs.
+            base = next((c for c in sorted(wad.parent.iterdir())
+                         if c.is_file() and c.name.lower() == "chex.wad"), None)
+            if base is None:
+                die(f"Chex Quest 2 needs Chex Quest's CHEX.WAD next to {wad.name}")
+            render_wad = Path(tmp) / "CHEX2.WAD"
+            subprocess.run([sys.executable, str(HERE / "merge_wad.py"),
+                            str(base), str(wad), "-o", str(render_wad)], check=True)
+        rv = subprocess.run(
+            [sys.executable, str(HERE / "render_music.py"), str(render_wad), "-o", str(music_dir)],
+        )
     if rv.returncode != 0:
         die("music rendering failed (see above) - is fluidsynth/ffmpeg installed and on PATH?")
 

@@ -38,8 +38,12 @@ The build accepts, dropped into `input/`:
   reproduces what Chex's own executable changed (level names, pickup
   messages, finale text), free from
   [/idgames](https://www.doomworld.com/idgames/themes/chex/chexdeh). The
-  build refuses to pack Chex Quest without it. Chex Quest 2 and 3 aren't
-  supported.
+  build refuses to pack Chex Quest without it.
+* **`CHEX2.WAD`** — Chex Quest 2. It's an add-on for Chex Quest, not a
+  standalone game: it needs **`CHEX.WAD`** and **`chex.deh`** next to it,
+  and the build merges it onto `CHEX.WAD` into a single WAD. With more than
+  one WAD in `input/`, pick it with `build.cmd --wad input/CHEX2.WAD`.
+  Chex Quest 3 isn't supported (it was made for ZDoom).
 
 ## What you need
 

@@ -161,17 +161,33 @@ $(PROG_NAME).z64: $(PROG_NAME).elf.stripped
 	# this, building DOOM2 after DOOM would silently pack both WADs into the
 	# DOOM2 ROM instead of just DOOM2.WAD.
 	rm -f filesystem/*.WAD
-	cp $(IWAD_DIRECTORY)/$(IWAD_PREFIX).WAD filesystem
+	# Chex Quest 2's CHEX2.WAD is an add-on for CHEX.WAD, not a standalone
+	# IWAD: merge it onto CHEX.WAD into the one WAD the engine loads (see
+	# tools/merge_wad.py). Everything else is copied as-is.
+	@if [ "$(IWAD_PREFIX)" = "CHEX2" ]; then \
+		base="$$(find $(IWAD_DIRECTORY) -maxdepth 1 -iname 'CHEX.WAD' | head -n 1)"; \
+		if [ -z "$$base" ]; then \
+			echo "error: Chex Quest 2 needs Chex Quest's CHEX.WAD next to CHEX2.WAD"; \
+			exit 1; \
+		fi; \
+		python3 ../tools/merge_wad.py "$$base" $(IWAD_DIRECTORY)/CHEX2.WAD -o filesystem/CHEX2.WAD || exit 1; \
+	else \
+		cp $(IWAD_DIRECTORY)/$(IWAD_PREFIX).WAD filesystem; \
+	fi
 	echo $(IWAD_PREFIX).WAD > filesystem/identifier
 	# Dehacked patch: <PREFIX>.DEH next to the WAD (any case) is packed as
 	# filesystem/dehacked.deh and applied at startup (see src/d_deh.c).
-	# Chex Quest needs its chex.deh - without it the game would play with
-	# Doom's texts - so that one is required, not optional.
+	# Chex Quest 2 falls back to Chex Quest's (the original ran on the same
+	# chex.exe). Both need it - without it the game would play with Doom's
+	# texts - so for them it's required, not optional.
 	rm -f filesystem/dehacked.deh
 	@deh="$$(find $(IWAD_DIRECTORY) -maxdepth 1 -iname '$(IWAD_PREFIX).deh' | head -n 1)"; \
+	if [ -z "$$deh" ] && [ "$(IWAD_PREFIX)" = "CHEX2" ]; then \
+		deh="$$(find $(IWAD_DIRECTORY) -maxdepth 1 -iname 'CHEX.deh' | head -n 1)"; \
+	fi; \
 	if [ -n "$$deh" ]; then \
 		echo "dehacked patch: $$deh"; cp "$$deh" filesystem/dehacked.deh; \
-	elif [ "$(IWAD_PREFIX)" = "CHEX" ]; then \
+	elif [ "$(IWAD_PREFIX)" = "CHEX" ] || [ "$(IWAD_PREFIX)" = "CHEX2" ]; then \
 		echo "error: Chex Quest needs its dehacked patch: put chex.deh next to CHEX.WAD"; \
 		echo "  (from https://www.doomworld.com/idgames/themes/chex/chexdeh)"; \
 		exit 1; \

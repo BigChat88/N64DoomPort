@@ -29,10 +29,13 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import merge_wad  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 
-KNOWN_PREFIXES = ("DOOM1", "DOOM", "DOOMU", "DOOM2", "PLUTONIA", "TNT", "CHEX")
+KNOWN_PREFIXES = ("DOOM1", "DOOM", "DOOMU", "DOOM2", "PLUTONIA", "TNT", "CHEX", "CHEX2")
 
 # Loose, non-WAD assets baked into every ROM (menu graphics, boot animation)
 # - everything in src/filesystem/ except the per-IWAD pieces this script
@@ -134,15 +137,31 @@ def find_deh(explicit: Path | None, wad: Path, prefix: str) -> Path | None:
         if not explicit.is_file():
             die(f"{explicit}: no such file")
         return explicit
-    for c in sorted(wad.parent.iterdir()):
-        if c.is_file() and c.name.lower() == f"{prefix.lower()}.deh":
-            return c
-    if prefix == "CHEX":
+    # Chex Quest 2 ran on Chex Quest's own chex.exe: same patch.
+    names = [f"{prefix.lower()}.deh"] + (["chex.deh"] if prefix == "CHEX2" else [])
+    for name in names:
+        for c in sorted(wad.parent.iterdir()):
+            if c.is_file() and c.name.lower() == name:
+                return c
+    if prefix in ("CHEX", "CHEX2"):
         die(
             f"Chex Quest needs its dehacked patch: put chex.deh next to {wad.name}\n"
             "  (from https://www.doomworld.com/idgames/themes/chex/chexdeh), or pass --deh"
         )
     return None
+
+
+def find_chex_base(explicit: Path | None, wad: Path) -> Path:
+    """CHEX.WAD, which Chex Quest 2's CHEX2.WAD is an add-on for: --base, or
+    CHEX.WAD (any case) next to CHEX2.WAD."""
+    if explicit:
+        if not explicit.is_file():
+            die(f"{explicit}: no such file")
+        return explicit
+    for c in sorted(wad.parent.iterdir()):
+        if c.is_file() and c.name.lower() == "chex.wad":
+            return c
+    die(f"Chex Quest 2 needs Chex Quest's CHEX.WAD next to {wad.name}, or pass --base")
 
 
 def main() -> None:
@@ -157,6 +176,9 @@ def main() -> None:
     ap.add_argument("--music-dir", type=Path, default=None,
                     help="dir of <lump>.wav files rendered by "
                          "tools/render_music.py (default: music_wav/<prefix>)")
+    ap.add_argument("--base", type=Path, default=None,
+                    help="CHEX2 only: the CHEX.WAD it's an add-on for "
+                         "(default: CHEX.WAD next to the WAD)")
     ap.add_argument("--deh", type=Path, default=None,
                     help="dehacked patch to apply (default: <prefix>.deh next "
                          "to the WAD, if any; required for CHEX)")
@@ -190,6 +212,7 @@ def main() -> None:
         )
 
     deh = find_deh(args.deh, wad, args.prefix)
+    base = find_chex_base(args.base, wad) if args.prefix == "CHEX2" else None
 
     out = args.out or (ROOT / "output" / f"{args.prefix}.z64")
     title = (args.title or args.prefix)[:20]
@@ -210,7 +233,15 @@ def main() -> None:
     try:
         log("[1/4] staging filesystem")
         stage_static_filesystem(fsroot)
-        shutil.copy2(wad, fsroot / f"{args.prefix}.WAD")
+        if base:
+            # CHEX2.WAD is an add-on for CHEX.WAD: pack the two merged into
+            # the single WAD the engine loads (see merge_wad.py).
+            merge_wad.write_wad(fsroot / f"{args.prefix}.WAD", b"IWAD",
+                                merge_wad.merge(merge_wad.read_wad(base)[1],
+                                                merge_wad.read_wad(wad)[1]))
+            log(f"merged {wad.name} onto {base.name}")
+        else:
+            shutil.copy2(wad, fsroot / f"{args.prefix}.WAD")
         (fsroot / "identifier").write_text(f"{args.prefix}.WAD\n")
         if deh:
             shutil.copy2(deh, fsroot / "dehacked.deh")

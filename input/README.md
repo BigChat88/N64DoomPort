@@ -15,6 +15,9 @@ Accepted (uppercase, matching the filename you pass as `IWAD_PREFIX`):
   https://www.doomworld.com/idgames/themes/chex/chexdeh - the build stops
   if it's missing). Any `<NAME>.deh` next to `<NAME>.WAD` is packed and
   applied the same way.
+* `CHEX2.WAD` — Chex Quest 2: an add-on for Chex Quest, so it needs
+  `CHEX.WAD` and `chex.deh` in this folder too. The build merges it onto
+  `CHEX.WAD` (see `tools/merge_wad.py`).
 
 You can drop more than one in here at the same time (e.g. both `DOOM.WAD` and
 `DOOM2.WAD`) - `IWAD_PREFIX` picks which one a given build uses. See the repo

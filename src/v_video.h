@@ -70,6 +70,16 @@ V_DrawPatch
   int		y,
   patch_t*	patch);
 
+// V_DrawPatch of only columns [x0, x1) of a patch, drawn starting at x -
+// crops one letter out of a whole-word WAD graphic (see m_menu.c).
+void
+V_DrawPatchColumns
+( int		x,
+  int		y,
+  patch_t*	patch,
+  int		x0,
+  int		x1 );
+
 void
 V_DrawPatchBuf
 ( int		x,

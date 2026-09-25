@@ -18,7 +18,7 @@ build_all.sh keeps using the filename for those, same as it always did.
 
 Usage:
     python3 identify_iwad.py path/to/some.wad
-Prints one of DOOM1, DOOM, DOOMU, CHEX, COMMERCIAL, or UNKNOWN.
+Prints one of DOOM1, DOOM, DOOMU, CHEX, CHEX2, COMMERCIAL, or UNKNOWN.
 """
 import hashlib
 import struct
@@ -27,6 +27,9 @@ from pathlib import Path
 
 # chex.wad as shipped with Chex Quest (1996) - note its header says PWAD.
 CHEX_SHA1 = {"eca9cff1014ce5081804e193588d96c6ddb35432"}
+# chex2.wad (Chex Quest 2, 1997): an add-on for chex.wad, not a standalone
+# IWAD - the build merges it onto CHEX.WAD (see merge_wad.py).
+CHEX2_SHA1 = {"d5b970834b8ff364d377ef04eb7d12fa6035e10a"}
 
 
 def file_sha1(path):
@@ -63,7 +66,11 @@ def identify(wad_path):
     # but chex.wad fills every slot up to E4M9 with copies, so it looks
     # exactly like The Ultimate Doom's lump list. Recognize the one
     # released chex.wad by its hash, or anything named CHEX.WAD.
-    if file_sha1(wad_path) in CHEX_SHA1 or Path(wad_path).stem.upper() == "CHEX":
+    sha1 = file_sha1(wad_path)
+    stem = Path(wad_path).stem.upper()
+    if sha1 in CHEX2_SHA1 or stem == "CHEX2":
+        return "CHEX2"
+    if sha1 in CHEX_SHA1 or stem == "CHEX":
         return "CHEX"
     if "E4M1" in names:
         return "DOOMU"

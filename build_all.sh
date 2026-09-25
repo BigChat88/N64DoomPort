@@ -27,7 +27,7 @@ export MSYS_NO_PATHCONV=1
 # engine falls back to gamemode "indetermined" for it, which isn't a
 # supported or tested configuration - expect menus/episode logic that branch
 # on gamemode to be wrong, not just cosmetic differences.
-KNOWN_PREFIXES=" DOOM1 DOOM DOOMU DOOM2 PLUTONIA TNT CHEX "
+KNOWN_PREFIXES=" DOOM1 DOOM DOOMU DOOM2 PLUTONIA TNT CHEX CHEX2 "
 
 force_music=0
 if [ "${1:-}" = "--force-music" ]; then
@@ -58,7 +58,7 @@ for wad in "${wads[@]}"; do
     # lump contents say unambiguously which one it really is, so prefer
     # that over the filename when they disagree.
     detected="$(python3 tools/identify_iwad.py "$wad" 2>/dev/null || echo UNKNOWN)"
-    if [[ "$detected" =~ ^(DOOM1|DOOM|DOOMU|CHEX)$ ]] && [ "$detected" != "$prefix" ]; then
+    if [[ "$detected" =~ ^(DOOM1|DOOM|DOOMU|CHEX|CHEX2)$ ]] && [ "$detected" != "$prefix" ]; then
         echo "note: $base's contents say it's $detected, not $prefix (filename) - using $detected."
         prefix="$detected"
     fi
@@ -93,7 +93,29 @@ for wad in "${wads[@]}"; do
         echo "music already rendered in $music_dir, skipping (use --force-music to redo it)"
     else
         echo "rendering music..."
-        if ! python3 tools/render_music.py "$wad" -o "$music_dir"; then
+        # Chex Quest 2 only carries the tracks it replaces: render from it
+        # merged onto CHEX.WAD, the same WAD the ROM build packs (see
+        # tools/merge_wad.py and src/Makefile).
+        render_wad="$wad"
+        if [ "$prefix" = "CHEX2" ]; then
+            shopt -s nocaseglob nullglob
+            chex_base=(input/chex.wad)
+            shopt -u nocaseglob nullglob
+            if [ ${#chex_base[@]} -eq 0 ]; then
+                echo "FAILED: Chex Quest 2 needs Chex Quest's CHEX.WAD in input/ too"
+                failed+=("$base (no CHEX.WAD)")
+                continue
+            fi
+            # Relative, inside the repo: under Git Bash, mktemp's /tmp/...
+            # paths don't resolve for a native Windows python3.
+            mkdir -p music_wav
+            render_wad="music_wav/.CHEX2-merged.WAD"
+            python3 tools/merge_wad.py "${chex_base[0]}" "$wad" -o "$render_wad" || { failed+=("$base (merge)"); continue; }
+        fi
+        render_ok=1
+        python3 tools/render_music.py "$render_wad" -o "$music_dir" || render_ok=0
+        [ "$render_wad" != "$wad" ] && rm -f "$render_wad"
+        if [ "$render_ok" -eq 0 ]; then
             echo "FAILED: music render for $base"
             failed+=("$base (music render)")
             continue
