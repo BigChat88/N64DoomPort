@@ -1041,8 +1041,8 @@ void M_DrawEpisode(void)
 
 void M_VerifyNightmare(int ch)
 {
-//    if (ch != 'y')
-//	return;
+    if (ch != 'y')
+	return;
 
     G_DeferedInitNew(nightmare,epi+1,1);
     M_ClearMenus ();
@@ -1400,8 +1400,8 @@ void M_ChangeMessages(int choice)
 //
 void M_EndGameResponse(int ch)
 {
-//    if (ch != 'y')
-//	return;
+    if (ch != 'y')
+	return;
 
     currentMenu->lastOn = itemOn;
     M_ClearMenus ();
@@ -1484,8 +1484,8 @@ int     quitsounds2[8] =
 
 void M_QuitResponse(int ch)
 {
-//    if (ch != 'y')
-//	return;
+    if (ch != 'y')
+	return;
     if (!netgame)
     {
 	if (gamemode == commercial)
@@ -1906,9 +1906,20 @@ boolean M_Responder (event_t* ev)
     // Take care of any messages that need input
     if (messageToPrint)
     {
-	if (messageNeedsInput == true &&
-	    !(ch == ' ' || ch == 'n' || ch == 'y' || ch == KEY_ESCAPE))
-	    return false;
+	// Yes/no prompts on the gamepad: A (which posts ' ' and KEY_ENTER
+	// in menus, see i_input.c) answers yes; B (KEY_BACKSPACE) and Start
+	// (KEY_ESCAPE) answer no, like Escape always did on a keyboard.
+	// Mapped to 'y'/'n' here so every prompt routine can keep its
+	// original "ch != 'y'" check.
+	if (messageNeedsInput == true)
+	{
+	    if (ch == ' ' || ch == KEY_ENTER)
+		ch = 'y';
+	    else if (ch == KEY_BACKSPACE || ch == KEY_ESCAPE)
+		ch = 'n';
+	    if (ch != 'y' && ch != 'n')
+		return false;
+	}
 
 	menuactive = messageLastMenuActive;
 	messageToPrint = 0;
