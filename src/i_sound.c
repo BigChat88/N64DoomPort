@@ -299,6 +299,7 @@ static int sfx_bytelen[NUMSFX];
 // is enough - no need to track multiple handles.
 static wav64_t music_wav;
 static int     music_wav_open = 0;
+static void    I_UpdateMusicEnd(void);
 static float   music_gain = 1.0f;
 static int     music_paused = 0;
 
@@ -327,7 +328,12 @@ static int     music_paused = 0;
 // ceiling against the new, louder master read as "music too loud, SFX too
 // quiet again" (see the iteration-9 bug report) even though nothing here
 // changed - only the source got louder out from under this fraction.
-#define MUSIC_LEVEL_FRAC 0.15f
+//
+// Back to 1.0 (no extra cut): every one of those "SFX too quiet" reports
+// was really I_SetSfxVolPan capping SFX at 12% of their level. With that
+// fixed, music no longer needs holding down to match them; the overall
+// level is set once, for both, by mixer_set_vol in I_InitSound.
+#define MUSIC_LEVEL_FRAC 1.0f
 
 /**********************************************************************/
 //
@@ -560,6 +566,9 @@ void I_UpdateSound (void)
     // Re-spread SFX headroom across however many are playing right now -
     // see I_SfxRebalance's comment.
     I_SfxRebalance(-1);
+
+    // Mute (not stop) a play-once song as it ends - see its comment.
+    I_UpdateMusicEnd();
 }
 
 void I_SubmitSound (void)
@@ -593,16 +602,15 @@ void I_InitSound (void)
     // silent clamping. N64DoomRPGPort's pd_sound.c raises this for every
     // channel for the same reason (see its SND_MAX_SRCFREQ).
     mixer_ch_set_limits(MUSIC_CH, 0, 48000.0f, 0);
-    // Headroom: the N64 DAC hard-clips (audible as crackle/static) when
-    // several channels sum past full scale. Started at N64DoomRPGPort's
-    // own value (see its pd_sound.c) - the two projects' channel layouts
-    // are now directly comparable (a handful of SFX channels plus one
-    // already-mastered music channel) - then raised: confirmed no clipping
-    // at 0.7, and SFX (already at their own ceiling for a single voice -
-    // see MUSIC_LEVEL_FRAC's comment on why that can't be raised any other
-    // way) still read as too quiet against music (see the iteration-3 bug
-    // report).
-    mixer_set_vol(0.8f);
+    // Headroom: the mix hard-clips when several channels sum past full
+    // scale. Every level before this was tuned while SFX were stuck at 12%
+    // of their volume (see I_SetSfxVolPan), so the whole mix ran ~24 dB
+    // under full scale. With that fixed, 0.5 puts a single SFX peak at
+    // ~0.31 and music at ~0.23 of full scale with the menu's default
+    // sliders (SFX 12, music 9) - SFX: SFX_PEAK 100/128 x 12/15 x 0.5,
+    // music: render_music.py's 0.75 limiter x 9/15 x 0.5 - which leaves room
+    // for a busy fight's several SFX plus music to sum without clipping.
+    mixer_set_vol(0.5f);
 
     changepitch = M_CheckParm("-changepitch");
 
@@ -691,15 +699,22 @@ int I_GetSfxLumpNum (sfxinfo_t *sfx)
 
 // Doom's classic stereo-separation curve (sep: 0-256, 128 = center),
 // applied identically to left and right, just in float instead of the
-// original fixed-point. vol is 0-127.
+// original fixed-point.
+//
+// vol is 0-15: s_sound.c works in snd_SfxVolume's own units (the menu's
+// 0-15 slider - see S_Init/M_SfxVol, whose "*8" to vanilla's 0-127 scale is
+// commented out), distance attenuation included. This used to divide by
+// 127 as if it got vanilla's scale, so every SFX played at 15/127 = 12% of
+// its level at most, even with the slider at max - the long-standing
+// "SFX too quiet" that music's level kept being lowered to balance against.
 static void I_SetSfxVolPan(int ch, int vol, int sep)
 {
     float volf, lf, rf;
     int s;
 
     if (vol < 0) vol = 0;
-    else if (vol > 127) vol = 127;
-    volf = vol / 127.0f;
+    else if (vol > 15) vol = 15;
+    volf = vol / 15.0f;
 
     s = sep;
     lf = (127.0f - ((127.0f * s * s) / 65536.0f)) / 127.0f;
@@ -846,9 +861,55 @@ void I_ShutdownMusic(void)
 
 // music_gain (0-1, from the slider) scaled by the fixed balance ceiling -
 // see MUSIC_LEVEL_FRAC.
+// A song started without looping (the title screen's) is really played
+// looping, and muted just before it ends instead of being left to stop -
+// see I_UpdateMusicEnd. music_once marks such a song, music_done that it
+// has reached its end and stays silent from then on.
+static int    music_once = 0;
+static int    music_done = 0;
+static double music_last_pos = 0;
+
 static float I_MusicVol(void)
 {
+    if (music_done)
+    {
+        return 0.0f;
+    }
     return music_gain * MUSIC_LEVEL_FRAC;
+}
+
+//
+// Keeps the music channel running once a non-looping song ends: muted,
+// not stopped. With the music channel stopped, and only SFX left in the
+// mixer, SFX came out crackling ("clipping") - found on the title screen,
+// the one place a song ever ends (its music doesn't loop; every level's
+// does), and only once it had finished: while it played, or in game with
+// the music slider at 0 (channel still running, just silent), SFX were
+// clean. Same family of libdragon mixer bug as the unaligned 8-bit SFX
+// one (see getsfx), so rather than depend on which mix of channels
+// triggers it, the mixer is simply never left without the music channel.
+//
+// Muted a little before the end rather than on the wrap: the track's own
+// last moments are already a fade to silence (render_music.py), so nothing
+// is lost, and the restart of the loop is never heard. The wrap check is a
+// backstop for a frame long enough to skip past that margin.
+//
+static void I_UpdateMusicEnd(void)
+{
+    if (!music_once || music_done || !music_wav_open || !mixer_ch_playing(MUSIC_CH))
+    {
+        return;
+    }
+
+    double pos = mixer_ch_get_pos(MUSIC_CH);
+    double end = music_wav.wave.len - music_wav.wave.frequency * 0.25;
+
+    if (pos >= end || pos < music_last_pos)
+    {
+        music_done = 1;
+        mixer_ch_set_vol(MUSIC_CH, 0.0f, 0.0f);
+    }
+    music_last_pos = pos;
 }
 
 /**********************************************************************/
@@ -964,7 +1025,12 @@ I_PlaySong
         return;
     }
 
-    wav64_set_loop(&music_wav, looping != 0);
+    // Always looping on the mixer side, even for a song meant to play once:
+    // that one is muted as it ends instead (see I_UpdateMusicEnd).
+    wav64_set_loop(&music_wav, true);
+    music_once = (looping == 0);
+    music_done = 0;
+    music_last_pos = 0;
     // Force the mixer to re-read the waveform config (loop length): it
     // skips that when the same wave object is replayed on the channel, so
     // a shared handle whose loop flag just changed would keep the
