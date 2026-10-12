@@ -211,12 +211,7 @@ void D_Display(void)
     static  boolean        fullscreen = false;
     static  gamestate_t    oldgamestate = -1;
     static  int            borderdrawcount;
-            int            nowtime;
-            int            tics;
             int            y;
-            int            wipestart;
-            boolean        done;
-            boolean        wipe;
             boolean        redrawsbar;
 
     if (nodrawers)
@@ -248,7 +243,7 @@ void D_Display(void)
 //    }
 //    else
 //    {
-        wipe = false;
+//        wipe = false;
 //    }
 
     if ((gamestate == GS_LEVEL) && gametic)
@@ -379,7 +374,14 @@ void D_Display(void)
 //    }
 
 #if 0
-    // wipe update
+    // wipe update (disabled - its locals live here so they don't trigger
+    // unused-variable warnings in the build that doesn't use them)
+    {
+    int            nowtime;
+    int            tics;
+    int            wipestart;
+    boolean        done;
+
     wipe_EndScreen(0, 0, SCREENWIDTH, SCREENHEIGHT);
 
     wipestart = I_GetTime () - 1;
@@ -404,6 +406,7 @@ void D_Display(void)
     while (!done);    
 
     I_FinishUpdate();
+    }
 #endif
 }
 

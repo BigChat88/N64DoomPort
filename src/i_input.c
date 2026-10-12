@@ -39,7 +39,6 @@
 
 void n64_do_cheat(int cheat);
 
-static int GODDED;
 
 // B doubles as a gameplay action (weapon change / use) and "back out of
 // menu". Remembers which one the last press picked, so the matching release
@@ -121,7 +120,6 @@ static int pad_weapon = 1;
 // repeated digit sends the exact same keypress as another slot, which
 // looks like the weapon-change button did nothing on that press.
 static char weapons[8] = { '1', '2', '3', '4', '5', '6', '7', '8' };
-static int lz_count = 0;
 
 // Type II's C-Left/C-Right each cycle pad_weapon and post a keydown for
 // whatever slot it lands on; released_key() then needs to post the matching
@@ -372,35 +370,8 @@ void pressed_key(joypad_buttons_t *p_data) //, int player)
 
     if (control_type == 0)
     {
-#if 1
-        // CHEAT WARP TO NEXT LEVEL
-        if (pressed.l && pressed.z && !pressed.r)
-        {
-            if ( (lz_count > 0) && (lz_count % 4 == 0) )
-            {
-                n64_do_cheat(13); // IDCLEV
-            }
-
-            lz_count += 1;
-        }
-
-        // TOGGLE GOD MODE
-        if (pressed.l && pressed.r && !pressed.z)
-        {
-            if (!GODDED)
-            {
-                n64_do_cheat(1);  // IDDQD
-                n64_do_cheat(3);  // IDKFA
-                n64_do_cheat(10); // IDBEHOLDA
-                n64_do_cheat(5);  // IDDT
-            }
-
-            GODDED ^= 1;
-        }
-#endif
-
-        // FIRE (guarded so the L+Z warp cheat doesn't also fire a shot)
-        if (pressed.z && !pressed.l)
+        // FIRE
+        if (pressed.z)
         {
             doom_input_event.data1 = KEY_RCTRL;
             doom_input_event.type = ev_keydown;
@@ -472,8 +443,8 @@ void pressed_key(joypad_buttons_t *p_data) //, int player)
             D_PostEvent(&doom_input_event);
         }
 
-        // AUTOMAP (guarded so the L+R god mode cheat doesn't also toggle it)
-        if (pressed.r && !pressed.l)
+        // AUTOMAP
+        if (pressed.r)
         {
             doom_input_event.data1 = KEY_TAB;
             doom_input_event.type = ev_keydown;

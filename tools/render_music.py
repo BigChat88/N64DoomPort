@@ -37,6 +37,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import os
 import shutil
 import struct
@@ -59,7 +60,15 @@ RENDER_RATE = 44100      # fluidsynth's own render rate
 # audioconv64 invocation (--wav-compress 3 --wav-mono --wav-loop true - no
 # --wav-seek, which doesn't apply anyway: wav64_opus.c's own loop-restart
 # path seeks position 0 directly, not through a seekpoint).
-OUTPUT_RATE = 48000
+#
+# 24000 Hz, not 48000: also one of Opus' native rates (so audioconv64 still
+# never resamples - the reason above holds), and audioconv64 picks Opus'
+# bitrate from the sample rate (3000 + rate*channels bps), so 24 kHz packs
+# each track in about half the space - DOOM2's ROM went from 48MB to 37MB -
+# and halves the decoding work. Compared on real hardware against 48 kHz:
+# no audible difference on the N64's output. --rate 48000 still renders the
+# old way.
+OUTPUT_RATE = 24000
 # Safety net only, not a real trim - see trim_trailing_silence() for what
 # actually shapes the loop point. This used to be 120s, copied from
 # N64DoomRPGPort's own MUS_MAXLEN without checking whether it fit *this*
@@ -268,14 +277,22 @@ def render_track(fluidsynth, ffmpeg, soundfont, midi_path, out_wav, gain):
 
 
 def main():
+    global OUTPUT_RATE, OPUS_FRAME_SAMPLES
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("wad", help="path to an IWAD (DOOM.WAD, DOOM2.WAD, ...)")
     ap.add_argument("-o", "--output", required=True, help="directory to write <LUMPNAME>.wav files into")
     ap.add_argument("--soundfont", default=None,
                      help="path to a .sf2 (default: tools/soundfont/SC-55 Deemster [GZDoom].sf2)")
     ap.add_argument("--gain", type=float, default=0.6, help="fluidsynth -g (default: 0.6)")
+    ap.add_argument("--rate", type=int, default=OUTPUT_RATE, choices=(24000, 48000),
+                    help="output sample rate (default: %(default)s). Opus' bitrate in "
+                         "audioconv64 scales with it, so 24000 packs about half the size")
     ap.add_argument("lumps", nargs="*", help="specific lump names to render (default: every D_* lump)")
     args = ap.parse_args()
+
+    # Both are module-level so the helpers above pick the chosen rate up.
+    OUTPUT_RATE = args.rate
+    OPUS_FRAME_SAMPLES = OUTPUT_RATE // 50
 
     fluidsynth = find_tool("fluidsynth")
     ffmpeg = find_tool("ffmpeg")
@@ -298,6 +315,10 @@ def main():
     wanted = set(n.upper() for n in args.lumps) if args.lumps else None
     os.makedirs(args.output, exist_ok=True)
 
+    # Songs a WAD ships under several lump names are packed once, under the
+    # first name (see music_aliases.py) - no need to render the copies.
+    first_name_of = {}
+
     with tempfile.TemporaryDirectory() as tmp:
         count = 0
         for name, filepos, size in lumps_by_name.values():
@@ -312,6 +333,12 @@ def main():
                 if wanted is not None:
                     print(f"skip {name}: not a MUS lump")
                 continue
+
+            digest = hashlib.sha1(mus_data).digest()
+            if digest in first_name_of:
+                print(f"skip {name}: same song as {first_name_of[digest]}")
+                continue
+            first_name_of[digest] = name
 
             midi_bytes = mus2mid.mus_to_midi_bytes(mus_data, name)
             midi_path = os.path.join(tmp, f"{name}.mid")

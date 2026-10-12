@@ -662,10 +662,11 @@ void P_SetupLevel (unsigned int episode, unsigned int map, int playermask, skill
     // will be set by player think.
     players[consoleplayer].viewz = 1;
 
-    // Make sure all sounds are stopped before Z_FreeTags.
-    set_AI_interrupt(0);
+    // (This used to mask the audio interrupt around Z_FreeTags, from when
+    // the old interrupt-driven mixer could read freed sound data. The
+    // libdragon mixer only touches sound data that is never freed here -
+    // PU_SOUND - and masking the interrupt just cut the audio out.)
     Z_FreeTags (PU_LEVEL, PU_PURGELEVEL-1);
-    set_AI_interrupt(1);
 
     // UNUSED W_Profile ();
     P_InitThinkers ();

@@ -26,6 +26,7 @@
 #include <stdlib.h>
 
 #include <inttypes.h>
+#include <errno.h>
 #include <libdragon.h>
 
 #include "doomdef.h"
@@ -35,7 +36,7 @@
 #include "i_intro.h"
 
 extern void DoomIsOver();
-// see g_game.c - libdragon's get_mempak_free_space() always fails here
+// Controller Pak free space, through cpakfs - see g_game.c
 extern int pak_free_blocks(void);
 
 void check_and_init_mempak(void)
@@ -49,59 +50,34 @@ void check_and_init_mempak(void)
         }
         case JOYPAD_ACCESSORY_TYPE_CONTROLLER_PAK:
         {
-            int err;
-            // I left the below in the code #ifdef'd out for when I needed an easy way to nuke a controller pak
-#if 0
-            if (format_mempak(0))
+            // Through cpakfs, like the saves themselves (see g_game.c).
+            // Only a pak with no filesystem at all - cpakfs_mount failing
+            // with ENODEV: no valid ID sector, i.e. never formatted - gets
+            // formatted. The old mempak check formatted on *any* problem
+            // validate_mempak reported, which includes minor, recoverable
+            // filesystem issues: that would have wiped every other game's
+            // saves on the pak. Anything else is left alone; saving just
+            // reports the pak as bad.
+            if (cpakfs_mount(JOYPAD_PORT_1, "bootpak:/") == 0)
             {
-                printf("Error formatting mempak!\n");
+                cpakfs_unmount(JOYPAD_PORT_1);
+                printf("\nFree space: %d blocks\n", pak_free_blocks());
             }
-            else
+            else if (errno == ENODEV)
             {
-                printf("Memory card formatted!\n");
-            }
-#endif
-            if ((err = validate_mempak(0)))
-            {
-                if (err == -3)
+                printf("Controller Pak is not formatted! Formatting it.\n");
+                if (cpakfs_format(JOYPAD_PORT_1, false) < 0)
                 {
-                    printf("Mempak is not formatted! Formatting it automatically.\n");
-
-                    if (format_mempak(0))
-                    {
-                        printf("Error formatting mempak!\n");
-                    }
-                    else
-                    {
-                        printf("Memory card formatted!\n");
-                    }
+                    printf("Error formatting Controller Pak!\n");
                 }
                 else
                 {
-                    printf("Mempak bad or removed during read!\n");
+                    printf("Controller Pak formatted!\n");
                 }
             }
             else
             {
-                // this will print the details of each entry on the controller pak
-#if 0
-                for(int j = 0; j < 16; j++)
-                {
-                    entry_structure_t entry;
-
-                    get_mempak_entry(0, j, &entry);
-
-                    if(entry.valid)
-                    {
-                        printf("%s - %d blocks\n", entry.name, entry.blocks);
-                    }
-                    else
-                    {
-                        printf("(EMPTY)\n");
-                    }
-                }
-#endif
-                printf("\nFree space: %d blocks\n", pak_free_blocks());
+                printf("Controller Pak unreadable or damaged - not touching it.\n");
             }
 
             break;

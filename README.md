@@ -1,6 +1,6 @@
 # N64 Doom
 
-A DOOM port for the Nintendo 64, built on [libdragon](https://github.com/DragonMinded/libdragon)
+A DOOM port for the Nintendo 64, built on [libdragon](https://github.com/n64brew/libdragon)
 (the open-source N64 homebrew SDK), plus a tool that turns your own IWAD into
 a runnable `.z64`.
 
@@ -142,7 +142,7 @@ Thanks to **[jnmartin84](https://github.com/jnmartin84)** for
 (the `rdpq` branch specifically), the libdragon port of id Software's
 released DOOM source that this project is built on top of — the engine,
 renderer and N64 platform layer here all started as that code. Thanks also
-to the **[libdragon](https://github.com/DragonMinded/libdragon)** team for
+to the **[libdragon](https://github.com/n64brew/libdragon)** team for
 the open-source N64 SDK. 
 
 ## AI Note

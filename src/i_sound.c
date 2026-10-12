@@ -701,20 +701,20 @@ int I_GetSfxLumpNum (sfxinfo_t *sfx)
 // applied identically to left and right, just in float instead of the
 // original fixed-point.
 //
-// vol is 0-15: s_sound.c works in snd_SfxVolume's own units (the menu's
-// 0-15 slider - see S_Init/M_SfxVol, whose "*8" to vanilla's 0-127 scale is
-// commented out), distance attenuation included. This used to divide by
-// 127 as if it got vanilla's scale, so every SFX played at 15/127 = 12% of
-// its level at most, even with the slider at max - the long-standing
-// "SFX too quiet" that music's level kept being lowered to balance against.
+// vol is vanilla's 0-127 scale, distance attenuation included - s_sound.c
+// scales the menu's 0-15 slider by 8 (SFX_MAX_VOLUME), so its top setting
+// arrives as 120, which is treated as full level here. (s_sound.c used to
+// pass the raw 0-15 while this divided by 127, so every SFX played at 12%
+// of its level at most - the long-standing "SFX too quiet" that music's
+// level kept being lowered to balance against.)
 static void I_SetSfxVolPan(int ch, int vol, int sep)
 {
     float volf, lf, rf;
     int s;
 
     if (vol < 0) vol = 0;
-    else if (vol > 15) vol = 15;
-    volf = vol / 15.0f;
+    else if (vol > 120) vol = 120;
+    volf = vol / 120.0f;
 
     s = sep;
     lf = (127.0f - ((127.0f * s * s) / 65536.0f)) / 127.0f;
@@ -964,6 +964,72 @@ void I_ResumeSong(int handle)
 // always calls I_UnRegisterSong on the old one first), so the returned
 // "handle" is just a fixed non-zero sentinel, not a real per-song object -
 // see music_wav.
+//
+// Music lumps that are identical copies of another (DOOM2's D_THEDA2/3 of
+// D_THE_DA, ...) are packed only once - see tools/music_aliases.py. The
+// build writes mus/aliases.txt, one "ALIAS ORIGINAL" pair of lump names per
+// line; this loads it once and maps a lump name to the one actually packed.
+//
+#define MAX_MUSIC_ALIASES 64
+
+static char music_alias_from[MAX_MUSIC_ALIASES][9];
+static char music_alias_to[MAX_MUSIC_ALIASES][9];
+static int  music_num_aliases = -1;  // -1: table not loaded yet
+
+static void I_LoadMusicAliases(void)
+{
+    char buf[2048];
+    char from[16], to[16];
+    char *p;
+    int fd, len, n;
+
+    music_num_aliases = 0;
+    fd = dfs_open("/mus/aliases.txt");
+    if (fd < 0)
+    {
+        return;     // a ROM packed before aliasing: every song is its own file
+    }
+    len = dfs_read(buf, 1, sizeof(buf) - 1, fd);
+    dfs_close(fd);
+    if (len <= 0)
+    {
+        return;
+    }
+    buf[len] = '\0';
+
+    for (p = buf; *p && music_num_aliases < MAX_MUSIC_ALIASES; )
+    {
+        if (sscanf(p, "%15s %15s%n", from, to, &n) != 2)
+        {
+            break;
+        }
+        snprintf(music_alias_from[music_num_aliases], 9, "%.8s", from);
+        snprintf(music_alias_to[music_num_aliases], 9, "%.8s", to);
+        music_num_aliases++;
+        p += n;
+    }
+}
+
+// lump: upper-case music lump name (D_xxx). Returns the lump name whose
+// file is actually in the ROM.
+static const char *I_MusicAlias(const char *lump)
+{
+    int i;
+
+    if (music_num_aliases < 0)
+    {
+        I_LoadMusicAliases();
+    }
+    for (i = 0; i < music_num_aliases; i++)
+    {
+        if (!strcmp(music_alias_from[i], lump))
+        {
+            return music_alias_to[i];
+        }
+    }
+    return lump;
+}
+
 int I_RegisterSong(void *name)
 {
     char dfspath[40];
@@ -983,7 +1049,9 @@ int I_RegisterSong(void *name)
     }
     upper[i] = '\0';
 
-    snprintf(dfspath, sizeof(dfspath), "/mus/D_%s.wav64", upper);
+    char lump[16];
+    snprintf(lump, sizeof(lump), "D_%.6s", upper);    // lump names are 8 chars
+    snprintf(dfspath, sizeof(dfspath), "/mus/%s.wav64", I_MusicAlias(lump));
 
     // wav64_open asserts on a missing file rather than failing gracefully,
     // so check first - a WAD whose music lump name this didn't handle

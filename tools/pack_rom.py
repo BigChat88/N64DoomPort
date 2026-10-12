@@ -31,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import merge_wad  # noqa: E402
+import music_aliases  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -249,6 +250,13 @@ def main() -> None:
         log("[2/4] audioconv64 -> mus/*.wav64")
         mus_out = fsroot / "mus"
         mus_out.mkdir()
+        # A song the WAD ships under several lump names is packed once, with
+        # an alias table for the engine (see music_aliases.py).
+        aliases = music_aliases.music_aliases(
+            merge_wad.read_wad(fsroot / f"{args.prefix}.WAD")[1])
+        music_aliases.write_aliases(mus_out / "aliases.txt", aliases)
+        music_wavs = [w for w in music_wavs if w.stem.upper() not in aliases]
+        log(f"  {len(aliases)} duplicate song(s) aliased, {len(music_wavs)} to convert")
         for wav in music_wavs:
             run([tools["audioconv64"], "--wav-compress", "3", "--wav-mono",
                  "--wav-loop", "true", "-o", str(mus_out), wav.name],

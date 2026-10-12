@@ -23,6 +23,12 @@
 #include <libdragon.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <strings.h>
+
+// From <unistd.h>, declared by hand: including that header clashes with
+// Doom's own "close" (a door-action enum value in p_spec.h).
+extern int unlink(const char *path);
 
 #include "m_swap.h"
 
@@ -1218,161 +1224,140 @@ void G_LoadGame (char* name)
 char msg[256];
 
 //
-// is_our_save_entry
-// True if a Controller Pak entry is this game's save. Entries are named after
-// get_GAMEID() without its ".WAD" suffix and read back with an (empty)
-// extension appended, e.g. "DOOM2." - so the name must match the base AND be
-// followed by that '.', not just share a prefix: a plain prefix compare made
-// DOOM.WAD treat DOOM2's or DOOMU's save as its own (loading the wrong game's
-// save, or deleting it when saving).
+// Controller Pak saves, through libdragon's cpakfs (the Controller Pak
+// filesystem). Each game keeps one note, named after get_GAMEID() without
+// ".WAD" (DOOM2.WAD -> "DOOM2"), with game code 00 00 00 'A' and publisher
+// "E5": exactly what the old mempak API (write_mempak_entry_data) used to
+// write, so saves made by earlier builds are the very same note - they
+// load, and the next save replaces them. The data layout is unchanged too:
+// one 256-byte block holding the compressed size, then the LZF-compressed
+// save.
 //
-static int is_our_save_entry(const entry_structure_t *entry, const char *gameid);
+// (This replaces the deprecated mempak API, one of whose functions -
+// get_mempak_free_space - was broken outright: it mounted the pak under a
+// prefix libdragon itself rejects, so it always reported a bad pak.)
+//
+#define PAK_PREFIX     "doompak:/"
+#define PAK_NOTE_CODE  "00000041.E5"
 
-//
-// pak_free_blocks
-// Free pages on the Controller Pak in port 1, or -1 if it can't be read.
-// Replaces libdragon's get_mempak_free_space(), which is broken in the
-// libdragon version this port uses: it temporarily mounts the pak under the
-// prefix "mempak_shim", but attach_filesystem() rejects any prefix not
-// ending in ":/", so that mount always fails and the call always returns -2
-// ("pak bad or not present") on a perfectly good pak. Loading never calls it,
-// which is why loads worked while saves failed. Before this was checked for
-// errors, that -2 was silently added to the old save's size, so overwriting
-// only succeeded when the new save came out at least 2 blocks smaller than
-// the old one - the long-standing "not enough space" on every overwrite.
-//
-int pak_free_blocks(void)
+// "00000041.E5-DOOM2" - the note's name as cpakfs lists it.
+static void pak_note_name(char *out, size_t outlen)
+{
+    const char *gameid = get_GAMEID();
+    const char *dot = strchr(gameid, '.');
+    int len = dot ? (int)(dot - gameid) : (int)strlen(gameid);
+
+    snprintf(out, outlen, "%s-%.*s", PAK_NOTE_CODE, len, gameid);
+}
+
+// Why the last pak_mount failed, as shown to the player: "No Controller Pak"
+// when none is detected (kept short - the HUD line is narrow), otherwise
+// cpakfs_mount's result (-1 not a Controller Pak, -2 ID sector unreadable
+// or unformatted, -3 page table corrupt, -4 mount failed) plus errno, so a
+// pak that is there but won't mount can be told apart.
+static char pak_error[64];
+
+static int pak_mount(void)
+{
+    int type = joypad_get_accessory_type(JOYPAD_PORT_1);
+    int rc;
+
+    if (type != JOYPAD_ACCESSORY_TYPE_CONTROLLER_PAK)
+    {
+        snprintf(pak_error, sizeof(pak_error), "No Controller Pak");
+        return -1;
+    }
+    rc = cpakfs_mount(JOYPAD_PORT_1, PAK_PREFIX);
+    if (rc < 0)
+    {
+        snprintf(pak_error, sizeof(pak_error), "Controller Pak error %d (errno %d)", rc, errno);
+        return -1;
+    }
+    return 0;
+}
+
+static int pak_free_pages_mounted(void)
 {
     cpakfs_stats_t stats;
-    int err;
 
-    if (cpakfs_mount(JOYPAD_PORT_1, "doompak:/") < 0)
+    if (cpakfs_get_stats(JOYPAD_PORT_1, &stats) < 0)
     {
         return -1;
     }
-    err = cpakfs_get_stats(JOYPAD_PORT_1, &stats);
-    cpakfs_unmount(JOYPAD_PORT_1);
-    if (err < 0)
-    {
-        return -1;
-    }
-
     return stats.pages.total - stats.pages.used;
 }
 
-static int is_our_save_entry(const entry_structure_t *entry, const char *gameid)
+//
+// pak_free_blocks
+// Free pages (256-byte blocks) on the Controller Pak in port 1, or -1 if it
+// can't be read. Also used by the boot-time pak check (i_main.c).
+//
+int pak_free_blocks(void)
 {
-    const char *dot = strchr(gameid, '.');
-    size_t len = dot ? (size_t)(dot - gameid) : strlen(gameid);
+    int free_pages;
 
-    return entry->valid
-        && !strncmp(entry->name, gameid, len)
-        && entry->name[len] == '.';
+    if (pak_mount() < 0)
+    {
+        return -1;
+    }
+    free_pages = pak_free_pages_mounted();
+    cpakfs_unmount(JOYPAD_PORT_1);
+    return free_pages;
 }
 
 void G_DoLoadGame (void)
 {
-    char *gameid = get_GAMEID();
-    entry_structure_t entry;
     int i;
-    int j;
     int a,b,c;
     char vcheck[VERSIONSIZE];
-    int err;
-    // flag set when mempak entry name matches the current game identifier
-    int entry_found;
-    int any_entries;
-
-    set_AI_interrupt(0);
+    char note[40];
+    char path[64];
+    FILE *f;
+    size_t got;
 
     sprintf(msg, "Loaded game from mempak.");
 
     memset(&savebuffer[0],  0, SAVEGAMESIZE);
     memset(&mempak_data[0], 0, 256*123);
 
-    joypad_get_accessory_type(JOYPAD_PORT_1);
-
-    any_entries = 0;
-    err = 0;
-    entry_found = 0;
-    // maximum 16 mempak entries
-    for (j=0;j<16;j++)
+    if (pak_mount() < 0)
     {
-        /**
-          * @retval 0 if the entry was read successfully
-          * @retval -1 if the entry is out of bounds or entry_data is null
-          * @retval -2 if the mempak is bad or not present
-          */
-        int rv = get_mempak_entry( 0, j, &entry );
-        if (-1 == rv)
-        {
-            sprintf(msg, "entry out of bounds or entry_data null");
-            goto the_end_of_loading;
-        }
-        else if (-2 == rv)
-        {
-            sprintf(msg, "pak bad or not present");
-            goto the_end_of_loading;
-        }
-
-        if ( entry.valid )
-        {
-            any_entries = 1;
-
-            if (is_our_save_entry(&entry, gameid))
-            {
-                entry_found = 1;
-                break;
-            }
-        }
-    }
-
-    // not finding an entry is NOT an error case that should case the game to hang
-    // suggest to Doom that it print a message about it
-    if (!entry_found || !any_entries)
-    {
-        sprintf(msg, "Must save a game to load!");
+        snprintf(msg, sizeof(msg), "%s", pak_error);
         goto the_end_of_loading;
     }
 
-    // found an entry, but the "valid" flag is not set, this is probably an error case
-    // I am going to make this just print a message and return, instead of I_Error-ing
-    if (any_entries && entry_found && (!entry.valid))
+    pak_note_name(note, sizeof(note));
+    snprintf(path, sizeof(path), PAK_PREFIX "%s", note);
+    f = fopen(path, "rb");
+    if (!f)
+    {
+        // no save for this game is not an error that should stop anything:
+        // just tell the player, like before
+        if (errno == ENOENT)
+            sprintf(msg, "Must save a game to load!");
+        else
+            snprintf(msg, sizeof(msg), "Can't read save (errno %d)", errno);
+        cpakfs_unmount(JOYPAD_PORT_1);
+        goto the_end_of_loading;
+    }
+    got = fread(mempak_data, 1, sizeof(mempak_data), f);
+    fclose(f);
+    cpakfs_unmount(JOYPAD_PORT_1);
+
+    // header block (compressed size) + at least one block of compressed data
+    if (got < 2*256)
     {
         sprintf(msg, "Save entry invalid. Not loading.");
         goto the_end_of_loading;
     }
 
-    // read the mempak blocks referenced by the entry into readbuf for later processing
-    err = 0;
-    err |= read_mempak_entry_data(0, &entry, mempak_data);
-    if (0 != err)
-    {
-        I_Error("G_DoLoadGame: Error loading data!\nread_mempak_entry_data failed.");
-    }
-    if (!entry.valid)
-    {
-        sprintf(msg,"Save game invalid after mempak read. Not loading.");
-        goto the_end_of_loading;
-    }
-
-    // header block (compressed size) + at least one block of compressed data
-    if (entry.blocks < 2)
-    {
-        I_Error("less than 2 blocks");
-    }
-
     unsigned int uncompressed_save_size = 0;
     unsigned int compressed_save_size = *(uint32_t *)(&mempak_data[0]);
 
-    if(compressed_save_size < 1)
+    if (compressed_save_size < 1 || compressed_save_size > got - 256)
     {
-        I_Error("compressed save size too small");
-    }
-
-    if(compressed_save_size > 256*122)
-    {
-        I_Error("compressed save too large");
+        sprintf(msg, "Save game corrupt. Not loading.");
+        goto the_end_of_loading;
     }
 
     uint8_t *compressed_data = &mempak_data[256];
@@ -1440,8 +1425,6 @@ the_end_of_loading:
     players[consoleplayer].message = msg;
 
     gameaction = ga_nothing;
-
-    set_AI_interrupt(1);
 }
 
 //
@@ -1467,7 +1450,6 @@ void G_DoSaveGame (void)
     int      length;
     int      i;
 
-    set_AI_interrupt(0);
     mus_playing = 0;
 
     sprintf(name,SAVEGAMENAME"%d.dsg",savegameslot);
@@ -1539,52 +1521,47 @@ void G_DoSaveGame (void)
 
     *(uint32_t *)(&mempak_data[0]) = compressed_save_size;
 
-    char *gameid = get_GAMEID();
     // one header block (holding compressed_save_size) + the compressed data
     int save_size_in_blocks = SAVE_SIZE_IN_BLOCKS(compressed_save_size);
-
-    // Find every entry that belongs to this game, not just the first one.
-    // Earlier builds could leave more than one behind (a save that missed
-    // the old entry wrote a brand new one next to it), and each leftover
-    // permanently ate space an overwrite needs - so all of them are counted
-    // as reclaimable here and all of them get replaced by this save.
-    int old_ids[16];
+    char note[40];
+    char path[64];
+    dir_t dir;
     int num_old = 0;
     int old_blocks = 0;
+    FILE *f;
 
-    for (int j = 0; j < 16; j++)
+    if (pak_mount() < 0)
     {
-        entry_structure_t entry;
+        snprintf(msg, sizeof(msg), "%s", pak_error);
+        goto the_end_of_saving;
+    }
+    pak_note_name(note, sizeof(note));
+    snprintf(path, sizeof(path), PAK_PREFIX "%s", note);
 
-        /**
-          * @retval 0 if the entry was read successfully
-          * @retval -1 if the entry is out of bounds or entry_data is null
-          * @retval -2 if the mempak is bad or not present
-          */
-        int rv = get_mempak_entry( 0, j, &entry );
-
-        if (-1 == rv)
+    // Count every copy of this game's note, not just the first: earlier
+    // builds could leave more than one behind, and each leftover would
+    // permanently eat space an overwrite needs - all of them are reclaimed.
+    if (dir_findfirst(PAK_PREFIX, &dir) == 0)
+    {
+        do
         {
-            sprintf(msg, "entry out of bounds or entry_data null");
-            goto the_end_of_saving;
+            if (!strcasecmp(dir.d_name, note))
+            {
+                num_old++;
+                if (dir.d_size > 0)
+                {
+                    old_blocks += (dir.d_size + 255) / 256;
+                }
+            }
         }
-        else if (-2 == rv)
-        {
-            sprintf(msg, "pak bad or not present");
-            goto the_end_of_saving;
-        }
-
-        if (is_our_save_entry(&entry, gameid))
-        {
-            old_ids[num_old++] = j;
-            old_blocks += entry.blocks;
-        }
+        while (dir_findnext(PAK_PREFIX, &dir) == 0);
     }
 
-    int available_free_blocks = pak_free_blocks();
+    int available_free_blocks = pak_free_pages_mounted();
     if (available_free_blocks < 0)
     {
-        sprintf(msg, "pak bad or not present");
+        snprintf(msg, sizeof(msg), "Can't read pak free space (errno %d)", errno);
+        cpakfs_unmount(JOYPAD_PORT_1);
         goto the_end_of_saving;
     }
 
@@ -1594,69 +1571,36 @@ void G_DoSaveGame (void)
     if (save_size_in_blocks > (available_free_blocks + old_blocks))
     {
         sprintf(msg,"Not enough space for save (need %d, have %d)", save_size_in_blocks, (available_free_blocks + old_blocks));
+        cpakfs_unmount(JOYPAD_PORT_1);
         goto the_end_of_saving;
     }
 
     for (int k = 0; k < num_old; k++)
     {
-        entry_structure_t entry;
-
-        int rv = get_mempak_entry( 0, old_ids[k], &entry );
-        rv |= delete_mempak_entry(0, &entry);
-        if (0 != rv)
+        if (unlink(path) < 0)
         {
             sprintf(msg,"Can't remove old data, can't save.");
+            cpakfs_unmount(JOYPAD_PORT_1);
             goto the_end_of_saving;
         }
     }
 
-    entry_structure_t doom_save_entry;
-    doom_save_entry.blocks = save_size_in_blocks;
-    doom_save_entry.region = 'A';
-    doom_save_entry.valid = 1;
-    memset(doom_save_entry.name, '\0', 19);
-
-    for (i=0;i<strlen(gameid)-1;i++)
+    f = fopen(path, "wb");
+    if (!f)
     {
-        if (gameid[i] == '.')
-        {
-            break;
-        }
-
-        doom_save_entry.name[i] = gameid[i];
+        sprintf(msg, errno == EMFILE ? "no room in TOC for new entry" : "pak not present or bad");
+        cpakfs_unmount(JOYPAD_PORT_1);
+        goto the_end_of_saving;
     }
-
-    rv = 0;
-    rv |= write_mempak_entry_data(0, &doom_save_entry, mempak_data);
-
-/*
- * @retval 0 if the entry was created and written successfully
- * @retval -1 if the parameters were invalid or the note has no length
- * @retval -2 if the mempak wasn't present or was bad
- * @retval -3 if there was an error writing to the mempak
- * @retval -4 if there wasn't enough space to store the note
- * @retval -5 if there is no room in the TOC to add a new entry
-*/
-    if (-1 == rv)
+    if (fwrite(mempak_data, 256, save_size_in_blocks, f) != (size_t)save_size_in_blocks)
     {
-        sprintf(msg,"param invalid or no note len");
+        sprintf(msg, errno == ENOSPC ? "not enough space on the pak" : "error writing to pak");
     }
-    else if (-2 == rv)
+    if (fclose(f) != 0)
     {
-        sprintf(msg,"pak not present or bad");
+        sprintf(msg, "error writing to pak");
     }
-    else if (-3 == rv)
-    {
-        sprintf(msg,"error writing to pak");
-    }
-    else if (-4 == rv)
-    {
-        sprintf(msg,"not enough space (need %d, have %d)", save_size_in_blocks, pak_free_blocks());
-    }
-    else if (-5 == rv)
-    {
-        sprintf(msg,"no room in TOC for new entry");
-    }
+    cpakfs_unmount(JOYPAD_PORT_1);
 
 the_end_of_saving:
     players[consoleplayer].message = msg;
@@ -1666,7 +1610,6 @@ the_end_of_saving:
     gameaction = ga_nothing;
 
     mus_playing = 1;
-    set_AI_interrupt(1);
 }
 
 

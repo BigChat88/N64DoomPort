@@ -448,7 +448,6 @@ void R_InitTextures (void)
 
     int*		patchlookup;
 
-    int			totalwidth;
     int			nummappatches;
     int			offset;
 #ifdef RANGECHECK
@@ -518,7 +517,6 @@ void R_InitTextures (void)
     texturewidthmask = Z_Malloc (numtextures*4, PU_STATIC, 0);
     textureheight = Z_Malloc (numtextures*4, PU_STATIC, 0);
 
-    totalwidth = 0;
 
     for (i=0 ; i<numtextures ; i++, directory++)
     {
@@ -583,7 +581,6 @@ void R_InitTextures (void)
 		texturewidthmask[i] = j-1;
 		textureheight[i] = texture->height<<FRACBITS;
 
-		totalwidth += texture->width;
     }
 
     Z_Free (maptex1);

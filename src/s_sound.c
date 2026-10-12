@@ -98,6 +98,16 @@ static channel_t*      channels;
 // Internal default is max out of 0-15.
 int                    snd_SfxVolume = 15;
 
+// The loudest a sound effect can be, in the 0-127 units everything below
+// (and I_StartSound/I_UpdateSoundParams) works in. snd_SfxVolume itself is
+// the menu slider's 0-15 - vanilla Doom scaled it by 8 on the way in
+// (S_SetSfxVolume(snd_SfxVolume*8)), which this port had commented out, so
+// every volume here ran on a 0-15 scale instead: distance attenuation only
+// had 16 audible steps, and the boss-map formula in S_AdjustSoundParams
+// ("15 + ...", meant to keep every sound at least 15/127) pinned every
+// sound on a level 8 at full volume regardless of distance.
+#define SFX_MAX_VOLUME (snd_SfxVolume * 8)
+
 // Maximum volume of music. Useless so far.
 int                    snd_MusicVolume = 15;
 
@@ -263,9 +273,9 @@ void S_StartSoundAtVolume(void* origin_p, int sfx_id, int volume)
             return;
         }
 
-        if (volume > snd_SfxVolume)
+        if (volume > SFX_MAX_VOLUME)
         {
-            volume = snd_SfxVolume;
+            volume = SFX_MAX_VOLUME;
         }
     }
     else
@@ -342,7 +352,7 @@ void S_StartSoundAtVolume(void* origin_p, int sfx_id, int volume)
 
 void S_StartSound(void* origin, int sfx_id)
 {
-    S_StartSoundAtVolume(origin, sfx_id, snd_SfxVolume);
+    S_StartSoundAtVolume(origin, sfx_id, SFX_MAX_VOLUME);
 }
 
 
@@ -408,7 +418,7 @@ void S_UpdateSounds(void* listener_p)
             if (I_SoundIsPlaying(c->handle))
             {
                 // initialize parameters
-                volume = snd_SfxVolume;
+                volume = SFX_MAX_VOLUME;
                 pitch = NORM_PITCH;
                 sep = NORM_SEP;
 
@@ -421,9 +431,9 @@ void S_UpdateSounds(void* listener_p)
                         S_StopChannel(cnum);
                         continue;
                     }
-                    else if (volume > snd_SfxVolume)
+                    else if (volume > SFX_MAX_VOLUME)
                     {
-                        volume = snd_SfxVolume;
+                        volume = SFX_MAX_VOLUME;
                     }
                 }
 
@@ -621,7 +631,7 @@ int S_AdjustSoundParams(mobj_t* listener, mobj_t* source, int* vol, int* sep, in
     // volume calculation
     if (approx_dist < S_CLOSE_DIST)
     {
-        *vol = snd_SfxVolume;
+        *vol = SFX_MAX_VOLUME;
     }
     else if (gamemap == 8)
     {
@@ -630,12 +640,12 @@ int S_AdjustSoundParams(mobj_t* listener, mobj_t* source, int* vol, int* sep, in
             approx_dist = S_CLIPPING_DIST;
         }
 
-        *vol = 15 + ((snd_SfxVolume - 15) * ((S_CLIPPING_DIST - approx_dist) >> FRACBITS)) / S_ATTENUATOR;
+        *vol = 15 + ((SFX_MAX_VOLUME - 15) * ((S_CLIPPING_DIST - approx_dist) >> FRACBITS)) / S_ATTENUATOR;
     }
     else
     {
         // distance effect
-        *vol = (snd_SfxVolume * ((S_CLIPPING_DIST - approx_dist) >> FRACBITS)) / S_ATTENUATOR;
+        *vol = (SFX_MAX_VOLUME * ((S_CLIPPING_DIST - approx_dist) >> FRACBITS)) / S_ATTENUATOR;
     }
 
     return (*vol > 0);

@@ -153,7 +153,19 @@ $(PROG_NAME).elf.stripped: $(PROG_NAME).elf
 	$(STRIP) -s $(PROG_NAME).elf.stripped
 	$(N64_ELFCOMPRESS) -o . -c 1 $(PROG_NAME).elf.stripped
 
-$(PROG_NAME).z64: $(PROG_NAME).elf.stripped
+# Everything the ROM is packed from, not just the engine: with only the
+# engine as a prerequisite, changing this game's WAD, its dehacked patch or
+# its rendered music left the old ROM "up to date", and `make` handed back
+# a stale ROM without a word. Any WAD/.deh in the IWAD directory counts
+# (CHEX2 is built from two WADs, and names are matched case-insensitively
+# below), as do the packing tools and the static files in filesystem/.
+ROM_INPUTS = $(wildcard $(IWAD_DIRECTORY)/*.[Ww][Aa][Dd]) \
+             $(wildcard $(IWAD_DIRECTORY)/*.[Dd][Ee][Hh]) \
+             $(wildcard $(MUSIC_WAV_DIR)/*.wav) \
+             $(wildcard filesystem/intro/* filesystem/menulumps/*) \
+             ../tools/merge_wad.py ../tools/music_aliases.py
+
+$(PROG_NAME).z64: $(PROG_NAME).elf.stripped $(ROM_INPUTS)
 	rm -f $(PROG_NAME).z64
 	rm -f rom.dfs
 	# Remove any other IWAD left in filesystem/ from a previous build with a
@@ -205,11 +217,20 @@ $(PROG_NAME).z64: $(PROG_NAME).elf.stripped
 	fi
 	rm -rf filesystem/mus
 	mkdir -p filesystem/mus
+	# Songs a WAD ships more than once under different lump names are packed
+	# once: aliases.txt maps the copies to the original, which the engine
+	# looks up before opening a song (see tools/music_aliases.py).
+	python3 ../tools/music_aliases.py filesystem/$(IWAD_PREFIX).WAD -o filesystem/mus/aliases.txt
 	# Matches N64DoomRPGPort's exact audioconv64 invocation for its own
 	# looping music (see tools/render_music.py's OUTPUT_RATE comment for
-	# why the WAV is pre-resampled to 48000 Hz rather than passing flags
+	# why the WAV is resampled at render time rather than passing flags
 	# here to affect the encode).
-	$(AUDIOCONV64) --wav-compress 3 --wav-mono --wav-loop true -o filesystem/mus $(MUSIC_WAV_DIR)/*.wav
+	@wavs=""; for w in $(MUSIC_WAV_DIR)/*.wav; do \
+		n="$$(basename "$$w" .wav)"; \
+		grep -q "^$$n " filesystem/mus/aliases.txt || wavs="$$wavs $$w"; \
+	done; \
+	echo "$(AUDIOCONV64) --wav-compress 3 --wav-mono --wav-loop true -o filesystem/mus <$$(echo $$wavs | wc -w) tracks>"; \
+	$(AUDIOCONV64) --wav-compress 3 --wav-mono --wav-loop true -o filesystem/mus $$wavs
 	$(MKDFSPATH) rom.dfs ./filesystem/
 	$(N64TOOL) \
         --title $(PROG_NAME) --toc --output $(PROG_NAME).z64 --align 256 $(PROG_NAME).elf.stripped --align 8 $(PROG_NAME).sym --align 8 $(PROG_NAME).msym --align 16 rom.dfs
@@ -235,8 +256,14 @@ clean:
 $(O):
 	mkdir -p $(O)
 
+# -MMD -MP: also write a .d file listing each object's headers, so editing a
+# header recompiles every .c that includes it (without it, a changed
+# #define in a header - e.g. AUDIO_DEBUG in i_sound.h - left stale objects
+# behind and the link failed or, worse, silently mixed both versions).
 $(O)/%.o:	%.c | $(O)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+-include $(OBJS:.o=.d)
 
 #############################################################
 #

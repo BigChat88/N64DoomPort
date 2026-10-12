@@ -713,7 +713,6 @@ void TryRunTics (void)
     int		realtics;
     int		availabletics;
     int		counts;
-    int		numplaying;
     
     // get real tics		
     entertic = I_GetTime ();//(timekeeping >> 2);// /ticdup;
@@ -724,12 +723,10 @@ void TryRunTics (void)
     NetUpdate ();
 	
     lowtic = MAXINT;
-    numplaying = 0;
     for (i=0 ; i<doomcom->numnodes ; i++)
     {
 	if (nodeingame[i])
 	{
-	    numplaying++;
 	    if (nettics[i] < lowtic)
 		lowtic = nettics[i];
 	}
